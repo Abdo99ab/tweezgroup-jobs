@@ -1,0 +1,31 @@
+{% extends "admin/base.html" %}
+{% block title %}Dashboard — {{ company }} recruiting{% endblock %}
+{% block content %}
+<h1>Pipeline</h1>
+<p class="muted">{{ total }} active applicant{{ '' if total==1 else 's' }} across {{ roles|length }} role{{ '' if roles|length==1 else 's' }}</p>
+<div class="grid cols-4">
+  {% for s in statuses %}<a class="stat" href="{{ url_for('admin.applicants', status=s) }}"><div class="n">{{ counts[s] }}</div><div class="l"><span class="pill {{ s }}">{{ labels[s] }}</span></div></a>{% endfor %}
+</div>
+<h2>Roles</h2>
+<table><tr><th>Role</th><th>Location</th><th>Applicants</th><th>Status</th><th>Apply link</th><th></th></tr>
+{% for r in roles %}<tr>
+  <td><a href="{{ url_for('admin.applicants', role=r.slug) }}"><strong>{{ r.title }}</strong></a><br><span class="muted">{{ r.department or '' }}</span></td>
+  <td>{{ r.location or '-' }}</td>
+  <td>{{ r.applicants.filter_by(deleted_at=None).count() }}</td>
+  <td>{% if r.is_open %}<span class="pill hired">open</span>{% else %}<span class="pill rejected">closed</span>{% endif %}</td>
+  <td><code style="font-size:12px">{{ config.PUBLIC_BASE_URL }}/apply/{{ r.slug }}</code><br>
+      <details><summary class="muted" style="font-size:12px;cursor:pointer">embed on a website</summary>
+      <textarea readonly style="font-size:11px;min-height:60px" onclick="this.select()">&lt;iframe src="{{ config.PUBLIC_BASE_URL }}/apply/{{ r.slug }}?embed=1" style="width:100%;min-height:1150px;border:0" title="Apply — {{ r.title }}"&gt;&lt;/iframe&gt;</textarea></details></td>
+  <td><a class="btn small secondary" href="{{ url_for('admin.role_edit', role_id=r.id) }}">Edit</a></td>
+</tr>{% else %}<tr><td colspan="6">No roles yet — <a href="{{ url_for('admin.role_new') }}">create one</a>.</td></tr>{% endfor %}
+</table>
+<h2>Latest applications</h2>
+<table><tr><th>Applied</th><th>Candidate</th><th>Role</th><th>Status</th><th>Score</th></tr>
+{% for a in recent %}<tr>
+  <td class="muted">{{ a.created_at.strftime('%d %b %H:%M') }}</td>
+  <td><a href="{{ url_for('admin.applicant_detail', public_id=a.public_id) }}">{{ a.full_name }}</a><br><span class="muted">{{ a.email }}</span></td>
+  <td>{{ a.role.title }}</td><td><span class="pill {{ a.status }}">{{ labels[a.status] }}</span></td>
+  <td class="score">{{ a.score if a.score is not none else '–' }}</td>
+</tr>{% else %}<tr><td colspan="5" class="muted">No applications yet.</td></tr>{% endfor %}
+</table>
+{% endblock %}

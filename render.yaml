@@ -1,0 +1,56 @@
+# Render Blueprint — free web service. Database on Supabase (free), CVs on Google Drive (TWEEZ-CV-BANK).
+services:
+  - type: web
+    name: tweezgroup-jobs
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: API_KEY
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: COMPANY_NAME
+        value: Tweezgroup
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: PRIVACY_CONTACT_EMAIL
+        value: hr@tweezgroup.com
+      - key: DATABASE_URL
+        sync: false
+      - key: STORAGE_BACKEND
+        value: gdrive
+      - key: GDRIVE_ROOT_FOLDER_ID
+        value: 13CFAOjtqDm8KotvrTo__ujWkYhdYM-zI
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_REFRESH_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SUMMARY_MODEL
+        value: claude-haiku-4-5
+      - key: CLICKUP_API_TOKEN
+        sync: false
+      - key: CLICKUP_LIST_ID
+        sync: false
+      - key: CLICKUP_CREATE_ON
+        value: apply
+      - key: CLICKUP_TEAM_ID
+        value: "9015802184"
+      - key: CLICKUP_ASSIGNEE
+        value: Mehdi Mahcene
+      - key: CLICKUP_MENTIONS
+        value: Ahmidou, Taoufik Mousselmal, Abderrahmane Hammia
+      - key: FRAME_ANCESTORS
+        sync: false
+      - key: RETENTION_MONTHS
+        value: "12"

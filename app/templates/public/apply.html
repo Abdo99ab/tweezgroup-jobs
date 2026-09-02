@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Apply — {{ role.title }} — {{ company }}{% endblock %}
+{% block mainclass %}narrow{% endblock %}
+{% block content %}
+{% if not embed %}<p><a href="{{ url_for('public.jobs') }}">&larr; All positions</a></p>{% endif %}
+<h1>{{ role.title }}</h1>
+<p class="muted">{{ [role.department, role.location, role.employment_type]|select|join(' · ') }}</p>
+{% if role.description %}<div class="card">{{ role.description|replace('\n','<br>')|safe }}</div>{% endif %}
+
+<div class="card">
+<h2 style="margin-top:0">Your application</h2>
+<form method="post" enctype="multipart/form-data">
+  <input type="hidden" name="source" value="{{ source }}">
+  <label for="full_name">Full name *</label>
+  <input type="text" id="full_name" name="full_name" required value="{{ form.get('full_name','') }}">
+  <label for="email">Email *</label>
+  <input type="email" id="email" name="email" required value="{{ form.get('email','') }}">
+  <label for="phone">Phone</label>
+  <input type="tel" id="phone" name="phone" value="{{ form.get('phone','') }}">
+  <label for="linkedin_url">LinkedIn profile</label>
+  <input type="url" id="linkedin_url" name="linkedin_url" placeholder="https://www.linkedin.com/in/..." value="{{ form.get('linkedin_url','') }}">
+  <label for="location">Where are you based?</label>
+  <input type="text" id="location" name="location" placeholder="City, country" value="{{ form.get('location','') }}">
+  <label for="years_experience">Years of experience in this field *</label>
+  <input type="number" id="years_experience" name="years_experience" min="0" max="60" step="1" required style="max-width:160px" value="{{ form.get('years_experience','') }}">
+  <label for="cv">CV / Résumé * <span class="muted" style="font-weight:400">(PDF or Word, max 10 MB)</span></label>
+  <input type="file" id="cv" name="cv" accept=".pdf,.doc,.docx" required>
+  <label for="cover_note">Anything you'd like to add? <span class="muted" style="font-weight:400">(optional)</span></label>
+  <textarea id="cover_note" name="cover_note">{{ form.get('cover_note','') }}</textarea>
+  <label class="check"><input type="checkbox" name="consent" {% if form.get('consent')=='on' %}checked{% endif %}>
+    <span>I agree that {{ company }} stores and processes my application data, including my CV, for recruitment purposes as described in the <a href="{{ url_for('public.privacy') }}" target="_blank">privacy notice</a>. I can withdraw consent or ask for deletion at any time. *</span></label>
+  <p style="margin-top:20px"><button class="btn" type="submit">Submit application</button></p>
+</form>
+</div>
+{% endblock %}

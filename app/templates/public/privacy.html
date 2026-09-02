@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block mainclass %}narrow{% endblock %}
+{% block content %}
+<h1>Privacy notice for candidates</h1>
+<div class="card">
+<p><strong>Who we are.</strong> {{ company }} is the data controller for the personal data you submit when you apply for a position.</p>
+<p><strong>What we collect.</strong> Your name, contact details, LinkedIn profile, location, your CV and any note you add, plus the record of how your application progresses.</p>
+<p><strong>Why.</strong> To assess your application, contact you about it, and manage our recruitment process. The legal basis is your consent and our legitimate interest in recruiting. We may use software, including AI-assisted tools, to help organise and pre-screen applications; hiring decisions are always taken by a person.</p>
+<p><strong>Who sees it.</strong> The people involved in hiring for the role, and the service providers that host our applicant system and task tracker. We do not sell your data.</p>
+<p><strong>How long.</strong> We keep your application for {{ months }} months after you submit it, then delete it automatically, unless you are hired (your data then moves to your employee file) or you ask us to delete it sooner.</p>
+<p><strong>Your rights.</strong> You can ask to access, correct, or delete your data, or withdraw your consent at any time, by writing to <a href="mailto:{{ contact }}">{{ contact }}</a>. You also have the right to lodge a complaint with your data protection authority (in France, the CNIL).</p>
+</div>
+{% endblock %}

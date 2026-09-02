@@ -1,0 +1,26 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ 'Edit role' if role else 'New role' }}{% endblock %}
+{% block mainclass %}narrow{% endblock %}
+{% block content %}
+<h1>{{ 'Edit role' if role else 'New role' }}</h1>
+<div class="card"><form method="post">
+  <label>Title *</label><input type="text" name="title" required value="{{ role.title if role else '' }}">
+  <label>Role code (for CV file names)</label><input type="text" name="code" maxlength="8" style="max-width:140px" value="{{ role.code if role else '' }}" placeholder="auto, e.g. HM">
+  <div class="hint">CV files are named &lt;code&gt;&lt;DDMMYYYY&gt; - &lt;candidate&gt;.pdf, e.g. HM31082026 - Sara Benali.pdf</div>
+  <label>URL slug</label><input type="text" name="slug" value="{{ role.slug if role else '' }}" placeholder="auto-generated from title">
+  <div class="hint">Apply link becomes {{ config.PUBLIC_BASE_URL }}/apply/&lt;slug&gt;</div>
+  <div class="grid cols-2">
+    <div><label>Department</label><input type="text" name="department" value="{{ role.department or '' if role else '' }}"></div>
+    <div><label>Location</label><input type="text" name="location" value="{{ role.location or '' if role else '' }}"></div>
+  </div>
+  <label>Employment type</label><input type="text" name="employment_type" value="{{ role.employment_type or '' if role else '' }}" placeholder="Full-time, contract, internship…">
+  <label>Public description</label><textarea name="description">{{ role.description or '' if role else '' }}</textarea>
+  <label>Screening requirements (knowledge base for the agent)</label>
+  <textarea name="requirements" style="min-height:220px">{{ role.requirements or '' if role else '' }}</textarea>
+  <div class="hint">Not shown to candidates. Write what "good" looks like: must-haves, nice-to-haves, red flags, how to score. The agent screens every CV against this text — update it whenever the bar changes.</div>
+  <label>Google Drive folder ID for this role's CVs</label><input type="text" name="drive_folder_id" value="{{ role.drive_folder_id or '' if role else '' }}" placeholder="auto: best-matching existing subfolder of TWEEZ-CV-BANK, else a new '<title> CVs' folder">
+  <label>ClickUp list ID (optional override)</label><input type="text" name="clickup_list_id" value="{{ role.clickup_list_id or '' if role else '' }}" placeholder="defaults to CLICKUP_LIST_ID">
+  <label class="check"><input type="checkbox" name="is_open" {% if not role or role.is_open %}checked{% endif %}> Accepting applications</label>
+  <p style="margin-top:20px"><button class="btn" type="submit">Save role</button></p>
+</form></div>
+{% endblock %}

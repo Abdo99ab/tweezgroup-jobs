@@ -1,0 +1,23 @@
+{% extends "admin/base.html" %}
+{% block title %}Applicants{% endblock %}
+{% block content %}
+<h1>Applicants {% if role %}<span class="muted" style="font-weight:400">· {{ role.title }}</span>{% endif %}</h1>
+<form method="get" class="filters">
+  <div><label>Role</label><select name="role"><option value="">All roles</option>{% for r in roles %}<option value="{{ r.slug }}" {{ 'selected' if role and role.id==r.id }}>{{ r.title }}</option>{% endfor %}</select></div>
+  <div><label>Status</label><select name="status"><option value="">Any</option>{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if status==s }}>{{ labels[s] }}</option>{% endfor %}</select></div>
+  <div><label>Search (name, email, CV text)</label><input type="text" name="q" value="{{ search }}"></div>
+  <div><label>Sort</label><select name="sort"><option value="newest" {{ 'selected' if sort=='newest' }}>Newest</option><option value="score" {{ 'selected' if sort=='score' }}>Score</option></select></div>
+  <button class="btn secondary" type="submit">Filter</button>
+  <a class="btn secondary" href="{{ url_for('admin.export_csv') }}">Export CSV</a>
+</form>
+<table><tr><th>Applied</th><th>Candidate</th><th>Role</th><th>Exp.</th><th>Source</th><th>Status</th><th>Score</th><th>ClickUp</th></tr>
+{% for a in rows %}<tr>
+  <td class="muted">{{ a.created_at.strftime('%d %b %Y') }}</td>
+  <td><a href="{{ url_for('admin.applicant_detail', public_id=a.public_id) }}"><strong>{{ a.full_name }}</strong></a><br><span class="muted">{{ a.email }}{% if a.location %} · {{ a.location }}{% endif %}</span></td>
+  <td>{{ a.role.title }}</td><td>{{ a.years_experience ~ 'y' if a.years_experience is not none else '–' }}</td><td>{{ a.source }}</td>
+  <td><span class="pill {{ a.status }}">{{ labels[a.status] }}</span></td>
+  <td class="score">{{ a.score if a.score is not none else '–' }}</td>
+  <td>{% if a.clickup_task_url %}<a href="{{ a.clickup_task_url }}" target="_blank">task ↗</a>{% else %}<span class="muted">–</span>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="8" class="muted">Nothing matches.</td></tr>{% endfor %}
+</table>
+{% endblock %}

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ company }} — Careers{% endblock %}</title>
+<style>
+  :root{--bg:#f6f7f9;--card:#fff;--ink:#1a1d23;--muted:#666d7a;--line:#e3e6eb;--accent:#1f5eff;--accent-ink:#fff;--ok:#1a7f4b;--err:#c0392b;--warn:#b26a00}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+  a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+  header.top{background:#fff;border-bottom:1px solid var(--line)}
+  header.top .in{max-width:1100px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:20px}
+  header.top .brand{font-weight:700;font-size:17px;color:var(--ink)}
+  header.top nav a{margin-right:16px;color:var(--muted)}header.top nav a.active{color:var(--ink);font-weight:600}
+  main{max-width:1100px;margin:0 auto;padding:28px 20px}
+  main.narrow{max-width:720px}
+  body.embed main{padding:8px 4px}
+  h1{font-size:26px;margin:0 0 6px}h2{font-size:18px;margin:26px 0 10px}
+  .muted{color:var(--muted)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:22px;margin-bottom:18px}
+  label{display:block;font-weight:600;margin:14px 0 6px}
+  input[type=text],input[type=email],input[type=tel],input[type=url],input[type=password],select,textarea{width:100%;padding:10px 12px;border:1px solid #cfd4dc;border-radius:8px;font:inherit;background:#fff}
+  textarea{min-height:110px;resize:vertical}
+  input[type=file]{margin-top:4px}
+  .btn{display:inline-block;padding:10px 18px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);font-weight:600;cursor:pointer;font:inherit}
+  .btn.secondary{background:#fff;color:var(--ink);border-color:#cfd4dc}
+  .btn.danger{background:#fff;color:var(--err);border-color:var(--err)}
+  .btn.small{padding:6px 12px;font-size:13px}
+  .flash{padding:10px 14px;border-radius:8px;margin-bottom:10px}
+  .flash.error{background:#fdecea;color:var(--err)}.flash.ok{background:#e6f5ec;color:var(--ok)}
+  .hint{font-size:13px;color:var(--muted);margin-top:4px}
+  .check{display:flex;gap:10px;align-items:flex-start;margin-top:16px;font-weight:400}
+  .check input{margin-top:5px}
+  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;font-size:14px}
+  th{background:#fafbfc;font-weight:600;color:var(--muted);font-size:13px}
+  tr:last-child td{border-bottom:0}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;background:#eef1f5;color:#444}
+  .pill.new{background:#eef1f5;color:#555}
+  .pill.filtered{background:#e8efff;color:#1f4fd6}
+  .pill.selected{background:#e0f7f5;color:#0b6e66}
+  .pill.test_sent{background:#efe9ff;color:#5b34c9}
+  .pill.test_returned{background:#fff4e0;color:#9a5b00}
+  .pill.interview_done{background:#e3f0ff;color:#0f5cb5}
+  .pill.interview2_done{background:#dbe8ff;color:#0a48a0}
+  .pill.contract_sent{background:#ffeede;color:#b24a00}
+  .pill.rejected{background:#fdecea;color:#c0392b}
+  .pill.hired{background:#1a7f4b;color:#fff}
+  .grid{display:grid;gap:14px}.grid.cols-4{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.grid.cols-2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .stat .n{font-size:26px;font-weight:700}.stat .l{font-size:13px;color:var(--muted)}
+  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
+  .filters label{margin:0 0 4px;font-size:13px}
+  .filters input,.filters select{width:auto;min-width:160px}
+  pre.cv{white-space:pre-wrap;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:14px;max-height:520px;overflow:auto}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .kv{display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:14px}.kv dt{color:var(--muted)}.kv dd{margin:0}
+  footer{max-width:1100px;margin:30px auto;padding:0 20px;color:var(--muted);font-size:13px}
+  .events li{font-size:13px;margin-bottom:4px}
+  .score{font-weight:700}
+</style>
+</head>
+<body class="{{ 'embed' if embed }}">
+{% if not embed %}<header class="top"><div class="in">
+  <a class="brand" href="{{ url_for('public.jobs') }}">{{ company }}</a>
+  {% block nav %}{% endblock %}
+</div></header>{% endif %}
+<main class="{% block mainclass %}{% endblock %}">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, m in messages %}<div class="flash {{ cat }}">{{ m }}</div>{% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+{% if not embed %}<footer>{% block footer %}&copy; {{ company }} · <a href="{{ url_for('public.privacy') }}">Privacy notice for candidates</a>{% endblock %}</footer>{% endif %}
+</body>
+</html>

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block nav %}
+<nav>
+  <a href="{{ url_for('admin.dashboard') }}" class="{{ 'active' if request.endpoint=='admin.dashboard' }}">Dashboard</a>
+  <a href="{{ url_for('admin.applicants') }}" class="{{ 'active' if request.endpoint=='admin.applicants' }}">Applicants</a>
+  <a href="{{ url_for('admin.role_new') }}" class="{{ 'active' if request.endpoint in ('admin.role_new','admin.role_edit') }}">New role</a>
+  <a href="{{ url_for('public.jobs') }}" target="_blank">Public site ↗</a>
+  <a href="{{ url_for('admin.logout') }}">Log out</a>
+</nav>
+{% endblock %}

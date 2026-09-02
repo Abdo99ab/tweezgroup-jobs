@@ -1,0 +1,44 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ a.full_name }}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('admin.applicants', role=a.role.slug) }}">&larr; {{ a.role.title }} applicants</a></p>
+<div class="row" style="justify-content:space-between">
+  <h1>{{ a.full_name }} <span class="pill {{ a.status }}" style="vertical-align:middle">{{ labels[a.status] }}</span></h1>
+  <form method="post" class="row"><input type="hidden" name="action" value="status">
+    <select name="status">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if a.status==s }}>{{ labels[s] }}</option>{% endfor %}</select>
+    <button class="btn small" type="submit">Update status</button></form>
+</div>
+<div class="grid cols-2">
+  <div class="card">
+    <dl class="kv">
+      <dt>Role</dt><dd>{{ a.role.title }}</dd>
+      <dt>Email</dt><dd><a href="mailto:{{ a.email }}">{{ a.email }}</a></dd>
+      <dt>Phone</dt><dd>{{ a.phone or '–' }}</dd>
+      <dt>LinkedIn</dt><dd>{% if a.linkedin_url %}<a href="{{ a.linkedin_url }}" target="_blank">{{ a.linkedin_url }}</a>{% else %}–{% endif %}</dd>
+      <dt>Location</dt><dd>{{ a.location or '–' }}</dd>
+      <dt>Experience</dt><dd>{{ a.years_experience ~ ' years' if a.years_experience is not none else '–' }}</dd>
+      <dt>Source</dt><dd>{{ a.source }}</dd>
+      <dt>Applied</dt><dd>{{ a.created_at.strftime('%d %b %Y %H:%M') }} UTC</dd>
+      <dt>Consent</dt><dd>{{ a.consent_at.strftime('%d %b %Y') if a.consent_at else 'not recorded' }} · retained until {{ a.retention_until.strftime('%d %b %Y') if a.retention_until else '–' }}</dd>
+      <dt>ClickUp</dt><dd>{% if a.clickup_task_url %}<a href="{{ a.clickup_task_url }}" target="_blank">{{ a.clickup_task_id }} ↗</a>{% else %}not synced{% endif %}</dd>
+      <dt>CV</dt><dd>{% if a.cv_key %}<a href="{{ url_for('admin.applicant_cv', public_id=a.public_id) }}" target="_blank">{{ a.cv_filename }}</a> <span class="muted">({{ (a.cv_size/1024)|round|int }} KB)</span>{% if a.cv_url %} · <a href="{{ a.cv_url }}" target="_blank">open in Drive ↗</a>{% endif %}{% else %}no file yet{% endif %}</dd>
+      <dt>ID</dt><dd><code>{{ a.public_id }}</code></dd>
+    </dl>
+    {% if a.cover_note %}<h2>Cover note</h2><p>{{ a.cover_note }}</p>{% endif %}
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0">Screening</h2>
+    <p><span class="muted">Score</span> <span class="score" style="font-size:22px">{{ a.score if a.score is not none else '–' }}</span>{% if a.score is not none %}<span class="muted">/100</span>{% endif %}</p>
+    {% if a.ai_summary %}<p style="white-space:pre-wrap">{{ a.ai_summary }}</p>{% else %}<p class="muted">Not summarised yet.</p>{% endif %}
+    <form method="post" style="display:inline"><input type="hidden" name="action" value="process"><button class="btn small secondary" type="submit">Re-run summary + ClickUp sync</button></form>
+    <form method="post"><input type="hidden" name="action" value="notes">
+      <label>Recruiter notes</label><textarea name="notes">{{ a.notes or '' }}</textarea>
+      <p><button class="btn small secondary" type="submit">Save notes</button></p></form>
+    <h2>Activity</h2>
+    <ul class="events">{% for e in a.events.limit(30) %}<li><span class="muted">{{ e.created_at.strftime('%d %b %H:%M') }}</span> · <strong>{{ e.kind }}</strong> ({{ e.actor }}){% if e.message %} — {{ e.message }}{% endif %}</li>{% endfor %}</ul>
+  </div>
+</div>
+{% if a.cv_text %}<h2>CV text (extracted)</h2><pre class="cv">{{ a.cv_text }}</pre>{% endif %}
+<form method="post" onsubmit="return confirm('Permanently delete this candidate\'s personal data and CV?')" style="margin-top:20px">
+  <input type="hidden" name="action" value="delete"><button class="btn small danger" type="submit">Delete personal data (GDPR)</button></form>
+{% endblock %}
