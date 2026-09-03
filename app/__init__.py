@@ -65,11 +65,23 @@ def create_app(config_object=Config):
 
 def _auto_migrate():
     """Additive migrations: add any model column missing from an existing table (SQLite/Postgres/MySQL).
-    Safe to run on every startup; never drops or alters existing columns."""
-    from sqlalchemy import inspect, text
+    Safe to run on every startup; never drops or alters existing columns.
 
-    insp = inspect(db.engine)
+    Gunicorn starts several workers at once; without a lock they can all inspect the
+    schema, all decide a column is missing, and the second ALTER TABLE crashes the
+    worker with DuplicateColumn.
+    """
+    from sqlalchemy import inspect, text
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    log = logging.getLogger(__name__)
+    dialect = db.engine.dialect.name
+
     with db.engine.begin() as conn:
+        if dialect == "postgresql":
+            conn.execute(text("SELECT pg_advisory_xact_lock(874231)"))
+
+        insp = inspect(conn)
         for table in db.metadata.sorted_tables:
             if not insp.has_table(table.name):
                 continue
@@ -78,8 +90,19 @@ def _auto_migrate():
                 if col.name in existing:
                     continue
                 ctype = col.type.compile(db.engine.dialect)
-                conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ctype}'))
-                logging.getLogger(__name__).info("auto-migrate: added %s.%s %s", table.name, col.name, ctype)
+                if dialect == "postgresql":
+                    sql = f'ALTER TABLE {table.name} ADD COLUMN IF NOT EXISTS {col.name} {ctype}'
+                else:
+                    sql = f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ctype}'
+                try:
+                    conn.execute(text(sql))
+                    log.info("auto-migrate: added %s.%s %s", table.name, col.name, ctype)
+                    existing.add(col.name)
+                except (ProgrammingError, OperationalError) as exc:
+                    if "duplicate column" in str(exc).lower() or "already exists" in str(exc).lower():
+                        existing.add(col.name)
+                        continue
+                    raise
 
 
 def register_cli(app):
