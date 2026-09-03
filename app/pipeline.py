@@ -54,19 +54,40 @@ def decide_status(applicant, cfg):
 
 
 def send_test(a):
-    """Email the candidate their unique online test link. Returns True when the mail actually left."""
+    """Email the candidate their unique online test link. Returns (sent, url)."""
     if not a.test_token:
         a.test_token = secrets.token_urlsafe(24)
     test_url = f"{current_app.config['PUBLIC_BASE_URL']}/test/{a.test_token}"
     subject, body = mailer.test_invitation(a, test_url)
-    sent = mailer.send(a.email, subject, body)
+    sent, err = mailer.send(a.email, subject, body)
     if sent:
         a.test_sent_at = utcnow()
         log_event(a, "email_sent", f"Technical test sent to {a.email}", actor="system")
     else:
-        log_event(a, "error", f"Test email could not be sent automatically — send this link manually: {test_url}",
+        log_event(a, "error",
+                  f"Test email to {a.email} failed: {err} — send this link manually: {test_url}",
                   actor="system")
     return sent, test_url
+
+
+def _eligible_for_test(a, cfg):
+    """High score, role has a test, not yet emailed, not in a terminal status."""
+    if a.test_sent_at or a.score is None:
+        return False
+    if a.score <= cfg["SELECT_ABOVE"]:
+        return False
+    if a.status in ("rejected", "hired", "test_sent", "test_returned"):
+        return False
+    role = a.role
+    return bool(role.test_questions and role.test_questions.strip())
+
+
+def _promote_to_test_sent(a, reason):
+    old = a.status
+    if old != "test_sent":
+        a.status = "test_sent"
+        log_event(a, "status_changed", f"{old} -> test_sent ({reason})", actor="system")
+        clickup.sync_status(a)
 
 
 def _run(app, applicant_id):
@@ -106,6 +127,13 @@ def _run(app, applicant_id):
                           f"{old} -> {target} (auto: score {a.score}, thresholds <{cfg['REJECT_BELOW']} reject, "
                           f">{cfg['SELECT_ABOVE']} select){test_note}", actor="claude")
                 done.append(f"auto_status:{target}")
+                db.session.commit()
+            elif _eligible_for_test(a, cfg):
+                # Re-apply / previous failed send: status is no longer "new" so decide_status skipped.
+                sent, test_url = send_test(a)
+                if sent:
+                    _promote_to_test_sent(a, "test email sent")
+                    done.append("auto_status:test_sent")
                 db.session.commit()
 
             # 3. ClickUp task (created with the decided status)

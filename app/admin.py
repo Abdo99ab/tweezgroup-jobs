@@ -114,11 +114,13 @@ def mail_test():
     to = request.form.get("to", "").strip()
     if not to:
         flash("Enter an address to send the test email to.", "error")
-    elif mailer.send(to, f"{current_app.config['COMPANY_NAME']} recruiting — mail test",
-                     "This is a test email from the applicant system. Mail is configured correctly."):
-        flash(f"Test email sent to {to} — check the inbox.", "ok")
     else:
-        flash("Sending failed — check the mail settings (see the banner) and the server logs.", "error")
+        sent, err = mailer.send(to, f"{current_app.config['COMPANY_NAME']} recruiting — mail test",
+                                "This is a test email from the applicant system. Mail is configured correctly.")
+        if sent:
+            flash(f"Test email sent to {to} — check the inbox.", "ok")
+        else:
+            flash(f"Sending failed: {err}", "error")
     return redirect(url_for("admin.dashboard"))
 
 

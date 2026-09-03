@@ -5,16 +5,17 @@ MAIL_BACKEND=gmail_api  — Gmail API using the same GOOGLE_OAUTH_* credentials 
                           (re-run scripts/gdrive_auth.py so the token includes gmail.send).
 MAIL_BACKEND=log        — no real sending; the message is logged (development).
 
-send() returns True only when the message actually left; callers use that to decide whether a
-candidate can be considered notified.
+send() returns (ok, error_message). error_message is None on success.
 """
 import logging
 import smtplib
+import threading
 from email.message import EmailMessage
 
 from flask import current_app
 
 log = logging.getLogger(__name__)
+_gmail_lock = threading.Lock()
 
 
 def configured():
@@ -44,7 +45,10 @@ def status():
 
 def _gmail_send(msg):
     """Send through the Gmail API with the same OAuth credentials used for Drive.
-    The refresh token must include the gmail.send scope (re-run scripts/gdrive_auth.py once)."""
+
+    A new client is built per send (httplib2 is not thread-safe). From must be the
+    authorised Gmail account; MAIL_FROM is used as Reply-To when it differs.
+    """
     import base64
 
     from google.oauth2.credentials import Credentials
@@ -57,22 +61,34 @@ def _gmail_send(msg):
     creds = Credentials(None, refresh_token=cfg["GOOGLE_OAUTH_REFRESH_TOKEN"],
                         client_id=cfg["GOOGLE_OAUTH_CLIENT_ID"], client_secret=cfg["GOOGLE_OAUTH_CLIENT_SECRET"],
                         token_uri="https://oauth2.googleapis.com/token")
-    service = current_app.extensions.get("_gmail_service") or build("gmail", "v1", credentials=creds,
-                                                                    cache_discovery=False)
-    current_app.extensions["_gmail_service"] = service
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    with _gmail_lock:
+        service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        me = service.users().getProfile(userId="me").execute().get("emailAddress") or "me"
+        wanted = (cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"] or "").strip()
+        if "From" in msg:
+            msg.replace_header("From", me)
+        else:
+            msg["From"] = me
+        if wanted and wanted.lower() != me.lower():
+            if "Reply-To" in msg:
+                msg.replace_header("Reply-To", wanted)
+            else:
+                msg["Reply-To"] = wanted
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        service.users().messages().send(userId="me", body={"raw": raw}).execute()
 
 
 def send(to, subject, body):
+    """Send an email. Returns (True, None) or (False, error_string)."""
     cfg = current_app.config
-    if cfg["MAIL_BACKEND"] == "log":  # development: treat as sent, keep a record in the logs
+    if cfg["MAIL_BACKEND"] == "log":
         log.info("MAIL (log backend) to=%s subject=%r\n%s", to, subject, body)
         current_app.extensions.setdefault("_sent_mail", []).append({"to": to, "subject": subject, "body": body})
-        return True
+        return True, None
     if not configured():
-        log.warning("Mail not configured (backend=%s); could not email %s", cfg["MAIL_BACKEND"], to)
-        return False
+        err = f"Mail not configured (backend={cfg['MAIL_BACKEND']})"
+        log.warning("%s; could not email %s", err, to)
+        return False, err
     msg = EmailMessage()
     msg["From"] = cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"] or "me"
     msg["To"] = to
@@ -87,10 +103,11 @@ def send(to, subject, body):
                 s.login(cfg["MAIL_USERNAME"], cfg["MAIL_PASSWORD"])
                 s.send_message(msg)
         log.info("Mail sent to %s (%s): %r", to, cfg["MAIL_BACKEND"], subject)
-        return True
+        return True, None
     except Exception as exc:
+        err = str(exc)
         log.warning("Mail send failed to %s via %s: %s", to, cfg["MAIL_BACKEND"], exc)
-        return False
+        return False, err
 
 
 def test_invitation(applicant, test_url):
