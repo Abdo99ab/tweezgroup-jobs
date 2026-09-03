@@ -3,8 +3,9 @@
 {% block mainclass %}narrow{% endblock %}
 {% block content %}
 {% if not embed %}<p><a href="{{ url_for('public.jobs') }}">&larr; All positions</a></p>{% endif %}
+<p class="muted" style="letter-spacing:.22em;text-transform:uppercase;font-size:12px;margin:14px 0 6px">We're hiring</p>
 <h1>{{ role.title }}</h1>
-<p class="muted">{{ [role.department, role.location, role.employment_type]|select|join(' · ') }}</p>
+<p class="muted" style="letter-spacing:.08em;text-transform:uppercase;font-size:12px">{{ [role.department, role.location, role.employment_type]|select|join(' · ') }}</p>
 {% if role.description %}<div class="card">{{ role.description|replace('\n','<br>')|safe }}</div>{% endif %}
 
 <div class="card">

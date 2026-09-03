@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Technical test — {{ role.title }} — {{ company }}{% endblock %}
+{% block mainclass %}narrow{% endblock %}
+{% block content %}
+<p class="muted" style="letter-spacing:.22em;text-transform:uppercase;font-size:12px;margin:14px 0 6px">Technical test</p>
+<h1>{{ role.title }}</h1>
+<p class="muted">For {{ applicant.full_name }} · one submission only — you can prepare your answers elsewhere and paste them here.</p>
+<div class="card">
+  <h2 style="margin-top:0">Questions</h2>
+  <div style="white-space:pre-wrap">{{ role.test_questions }}</div>
+</div>
+<div class="card">
+<form method="post">
+  <label for="answers">Your answers *</label>
+  <textarea id="answers" name="answers" style="min-height:320px" placeholder="Answer each question, numbered like the questions above.">{{ answers }}</textarea>
+  <p style="margin-top:20px"><button class="btn" type="submit" onclick="return confirm('Submit your answers? You can only submit once.')">Submit my answers</button></p>
+</form>
+</div>
+{% endblock %}

@@ -17,12 +17,18 @@ ROLE_CODES = {
     "head accountant": "HA",
     "customer support": "CS",
     "bookkeeper": "BK",
-    "data scientist": "DA",
+    "data scientist": "DS",
     "graphic designer": "GD",
     "content creator": "CC",
     "sourcing manager": "SM",
     "brand manager": "BM",
     "b2b manager": "BB",
+    "b2b prospector": "PROS",
+    "tiktok ai video creator": "VC",
+    "chief operation officer": "COO",
+    "chief operating officer coo": "COO",
+    "chief operation officer coo": "COO",
+    "chief operating officer": "COO",
 }
 
 # TWEEZ-CV-BANK subfolders as they exist today (id -> name), so known roles are pinned exactly.
@@ -66,7 +72,7 @@ def normalize(text):
 
 
 def code_for_title(title):
-    """Agreed code if the title is known, else initials (Chief Operation Officer -> COO, B2B Prospector -> BP)."""
+    """Agreed code if the title is known (HM, TTS, AAM, HA, CS, BK, DS, GD, CC, SM, BM, BB, PROS, VC, COO), else initials."""
     norm = normalize(title)
     if norm in ROLE_CODES:
         return ROLE_CODES[norm]

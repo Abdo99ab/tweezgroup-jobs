@@ -90,6 +90,8 @@ def _save_role(role):
     role.employment_type = f.get("employment_type", "").strip() or None
     role.description = f.get("description", "").strip() or None
     role.requirements = f.get("requirements", "").strip() or None
+    role.test_questions = f.get("test_questions", "").strip() or None
+    role.test_answer_key = f.get("test_answer_key", "").strip() or None
     role.clickup_list_id = f.get("clickup_list_id", "").strip() or None
     role.drive_folder_id = f.get("drive_folder_id", "").strip() or None
     role.is_open = f.get("is_open") == "on"
@@ -98,6 +100,18 @@ def _save_role(role):
     db.session.commit()
     flash("Role saved.", "ok")
     return redirect(url_for("admin.applicants", role=role.slug))
+
+
+@bp.post("/roles/<int:role_id>/toggle")
+@login_required
+def role_toggle(role_id):
+    """One-click Active/Paused switch from the dashboard: paused roles disappear from /jobs
+    and their direct apply link shows the 'paused' page. Existing applicants are untouched."""
+    role = Role.query.get_or_404(role_id)
+    role.is_open = not role.is_open
+    db.session.commit()
+    flash(f"{role.title} is now {'ACTIVE — visible to candidates' if role.is_open else 'PAUSED — hidden from candidates'}.", "ok")
+    return redirect(request.referrer or url_for("admin.dashboard"))
 
 
 # ---------- applicants ----------

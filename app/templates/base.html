@@ -4,61 +4,117 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}{{ company }} — Careers{% endblock %}</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-  :root{--bg:#f6f7f9;--card:#fff;--ink:#1a1d23;--muted:#666d7a;--line:#e3e6eb;--accent:#1f5eff;--accent-ink:#fff;--ok:#1a7f4b;--err:#c0392b;--warn:#b26a00}
+  :root{
+    --forest:#12301c;         /* deepest green — footer, hovers */
+    --forest-2:#173d24;       /* logo green — header, buttons */
+    --forest-3:#1f4a2e;       /* raised green */
+    --gold:#ede9a0;           /* wordmark gold */
+    --gold-soft:#f4ffb4;      /* logo highlight */
+    --gold-deep:#a3934a;      /* gold on light ground */
+    --paper:#f5f4ea;          /* warm ivory ground */
+    --card:#fffdf6;
+    --ink:#1a241c;
+    --muted:#66715f;
+    --line:#e1e0cd;
+    --err:#a33d2e;--err-bg:#f9e9e4;--ok:#2c6e46;--ok-bg:#e8f1e6;
+  }
   *{box-sizing:border-box}
-  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
-  a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-  header.top{background:#fff;border-bottom:1px solid var(--line)}
-  header.top .in{max-width:1100px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:20px}
-  header.top .brand{font-weight:700;font-size:17px;color:var(--ink)}
-  header.top nav a{margin-right:16px;color:var(--muted)}header.top nav a.active{color:var(--ink);font-weight:600}
-  main{max-width:1100px;margin:0 auto;padding:28px 20px}
-  main.narrow{max-width:720px}
-  body.embed main{padding:8px 4px}
-  h1{font-size:26px;margin:0 0 6px}h2{font-size:18px;margin:26px 0 10px}
+  body{margin:0;font:15.5px/1.6 Figtree,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--paper);color:var(--ink)}
+  a{color:var(--forest-3);text-decoration:none}a:hover{color:var(--forest);text-decoration:underline;text-decoration-color:var(--gold-deep)}
+  ::selection{background:var(--gold);color:var(--forest)}
+
+  /* ---------- header ---------- */
+  header.top{background:var(--forest-2);border-bottom:3px solid var(--gold);box-shadow:0 1px 0 rgba(18,48,28,.25)}
+  header.top .in{max-width:1100px;margin:0 auto;padding:16px 20px;display:flex;align-items:center;gap:26px}
+  header.top .brand{font:700 19px/1 "Cormorant Garamond",Georgia,serif;letter-spacing:.34em;color:var(--gold);text-transform:uppercase;text-decoration:none}
+  header.top .brand:hover{color:var(--gold-soft);text-decoration:none}
+  header.top nav{display:flex;flex-wrap:wrap;gap:2px}
+  header.top nav a{padding:7px 12px;border-radius:7px;color:#cfd8c6;font-size:14px;font-weight:500}
+  header.top nav a:hover{color:var(--gold-soft);background:rgba(244,255,180,.08);text-decoration:none}
+  header.top nav a.active{color:var(--gold);background:rgba(244,255,180,.12);font-weight:600}
+
+  main{max-width:1100px;margin:0 auto;padding:34px 20px}
+  main.narrow{max-width:730px}
+  body.embed main{padding:10px 6px}
+
+  h1{font:600 clamp(28px,4vw,38px)/1.12 "Cormorant Garamond",Georgia,serif;letter-spacing:.01em;color:var(--forest);margin:0 0 8px;text-wrap:balance}
+  h2{font:600 22px/1.2 "Cormorant Garamond",Georgia,serif;color:var(--forest);margin:28px 0 12px}
   .muted{color:var(--muted)}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:22px;margin-bottom:18px}
-  label{display:block;font-weight:600;margin:14px 0 6px}
-  input[type=text],input[type=email],input[type=tel],input[type=url],input[type=password],select,textarea{width:100%;padding:10px 12px;border:1px solid #cfd4dc;border-radius:8px;font:inherit;background:#fff}
+  code{font:13px/1.5 "IBM Plex Mono",ui-monospace,Menlo,monospace}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;margin-bottom:18px;box-shadow:0 1px 3px rgba(26,36,28,.05)}
+
+  /* ---------- forms ---------- */
+  label{display:block;font-weight:600;margin:15px 0 6px;font-size:14.5px}
+  input[type=text],input[type=email],input[type=tel],input[type=url],input[type=number],input[type=password],select,textarea{
+    width:100%;padding:11px 13px;border:1px solid #cfceba;border-radius:9px;font:inherit;background:#fff;color:var(--ink);transition:border-color .15s, box-shadow .15s}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--forest-3);box-shadow:0 0 0 3px rgba(31,74,46,.14)}
   textarea{min-height:110px;resize:vertical}
-  input[type=file]{margin-top:4px}
-  .btn{display:inline-block;padding:10px 18px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);font-weight:600;cursor:pointer;font:inherit}
-  .btn.secondary{background:#fff;color:var(--ink);border-color:#cfd4dc}
-  .btn.danger{background:#fff;color:var(--err);border-color:var(--err)}
-  .btn.small{padding:6px 12px;font-size:13px}
-  .flash{padding:10px 14px;border-radius:8px;margin-bottom:10px}
-  .flash.error{background:#fdecea;color:var(--err)}.flash.ok{background:#e6f5ec;color:var(--ok)}
-  .hint{font-size:13px;color:var(--muted);margin-top:4px}
-  .check{display:flex;gap:10px;align-items:flex-start;margin-top:16px;font-weight:400}
-  .check input{margin-top:5px}
-  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
-  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;font-size:14px}
-  th{background:#fafbfc;font-weight:600;color:var(--muted);font-size:13px}
+  input[type=file]{margin-top:4px;font-size:14px}
+  .btn{display:inline-block;padding:11px 22px;border-radius:9px;border:1px solid var(--forest-2);background:var(--forest-2);color:var(--gold);font-weight:600;letter-spacing:.02em;cursor:pointer;font:inherit;transition:background .15s}
+  .btn:hover{background:var(--forest);color:var(--gold-soft);text-decoration:none}
+  .btn.secondary{background:transparent;color:var(--forest-2);border-color:#b9bda6}
+  .btn.secondary:hover{background:#ecebdc;color:var(--forest)}
+  .btn.danger{background:transparent;color:var(--err);border-color:var(--err)}
+  .btn.danger:hover{background:var(--err-bg)}
+  .btn.small{padding:6px 13px;font-size:13px}
+  .btn:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--gold-deep);outline-offset:2px}
+
+  .flash{padding:11px 15px;border-radius:9px;margin-bottom:10px;font-size:14.5px}
+  .flash.error{background:var(--err-bg);color:var(--err);border-left:3px solid var(--err)}
+  .flash.ok{background:var(--ok-bg);color:var(--ok);border-left:3px solid var(--ok)}
+  .hint{font-size:13px;color:var(--muted);margin-top:5px}
+  .check{display:flex;gap:11px;align-items:flex-start;margin-top:18px;font-weight:400;font-size:14.5px}
+  .check input{margin-top:4px;accent-color:var(--forest-2);width:16px;height:16px}
+
+  /* ---------- tables ---------- */
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{padding:11px 13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;font-size:14px}
+  th{background:#eeedde;font:600 12px/1.5 Figtree,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#5c664f}
   tr:last-child td{border-bottom:0}
-  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;background:#eef1f5;color:#444}
-  .pill.new{background:#eef1f5;color:#555}
-  .pill.filtered{background:#e8efff;color:#1f4fd6}
-  .pill.selected{background:#e0f7f5;color:#0b6e66}
-  .pill.test_sent{background:#efe9ff;color:#5b34c9}
-  .pill.test_returned{background:#fff4e0;color:#9a5b00}
-  .pill.interview_done{background:#e3f0ff;color:#0f5cb5}
-  .pill.interview2_done{background:#dbe8ff;color:#0a48a0}
-  .pill.contract_sent{background:#ffeede;color:#b24a00}
-  .pill.rejected{background:#fdecea;color:#c0392b}
-  .pill.hired{background:#1a7f4b;color:#fff}
+  tbody tr:hover td, table tr:hover td{background:#fbfaf0}
+  td{font-variant-numeric:tabular-nums}
+
+  /* ---------- status pills ---------- */
+  .pill{display:inline-block;padding:3px 11px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.05em;background:#eceadb;color:#57614e;white-space:nowrap}
+  .pill.new{background:#e7e6d5;color:#5c664f}
+  .pill.filtered{background:#e2ecdf;color:#2c6e46}
+  .pill.selected{background:#dcebe6;color:#1f5c4b}
+  .pill.test_sent{background:#e9e4f2;color:#5b4a8a}
+  .pill.test_returned{background:#f4ecd6;color:#8a6d1f}
+  .pill.interview_done{background:#dfe8f2;color:#2c5578}
+  .pill.interview2_done{background:#d3e0ef;color:#1f4468}
+  .pill.contract_sent{background:#f6e7d4;color:#93591c}
+  .pill.rejected{background:#f2e2dd;color:#a33d2e}
+  .pill.hired{background:var(--forest-2);color:var(--gold)}
+
+  /* ---------- layout helpers ---------- */
   .grid{display:grid;gap:14px}.grid.cols-4{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.grid.cols-2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
-  .stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px}
-  .stat .n{font-size:26px;font-weight:700}.stat .l{font-size:13px;color:var(--muted)}
-  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
-  .filters label{margin:0 0 4px;font-size:13px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px 17px;transition:border-color .15s}
+  a.stat:hover{border-color:var(--gold-deep);text-decoration:none}
+  .stat .n{font:600 30px/1 "Cormorant Garamond",Georgia,serif;color:var(--forest)}
+  .stat .l{font-size:13px;color:var(--muted);margin-top:5px}
+  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+  .filters label{margin:0 0 4px;font-size:12.5px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
   .filters input,.filters select{width:auto;min-width:160px}
-  pre.cv{white-space:pre-wrap;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:14px;max-height:520px;overflow:auto}
+  pre.cv{white-space:pre-wrap;font:13px/1.6 "IBM Plex Mono",ui-monospace,Menlo,monospace;background:#f2f1e3;border:1px solid var(--line);border-radius:10px;padding:16px;max-height:520px;overflow:auto}
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .kv{display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:14px}.kv dt{color:var(--muted)}.kv dd{margin:0}
-  footer{max-width:1100px;margin:30px auto;padding:0 20px;color:var(--muted);font-size:13px}
-  .events li{font-size:13px;margin-bottom:4px}
-  .score{font-weight:700}
+  .kv{display:grid;grid-template-columns:150px 1fr;gap:7px 12px;font-size:14px}.kv dt{color:var(--muted)}.kv dd{margin:0;overflow-wrap:anywhere}
+  .events li{font-size:13px;margin-bottom:5px;color:#414b3f}
+  .score{font-weight:700;color:var(--forest)}
+  details summary{cursor:pointer}
+
+  footer{background:var(--forest-2);border-top:3px solid var(--gold);margin-top:48px}
+  footer .in{max-width:1100px;margin:0 auto;padding:22px 20px;color:#b9c5ae;font-size:13.5px;display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  footer a{color:var(--gold)}footer a:hover{color:var(--gold-soft)}
+  footer .mark{font:700 13px/1 "Cormorant Garamond",Georgia,serif;letter-spacing:.3em;color:var(--gold);text-transform:uppercase}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+  @media (max-width:640px){header.top .in{flex-direction:column;align-items:flex-start;gap:10px}.kv{grid-template-columns:120px 1fr}}
 </style>
 </head>
 <body class="{{ 'embed' if embed }}">
@@ -72,6 +128,6 @@
   {% endwith %}
   {% block content %}{% endblock %}
 </main>
-{% if not embed %}<footer>{% block footer %}&copy; {{ company }} · <a href="{{ url_for('public.privacy') }}">Privacy notice for candidates</a>{% endblock %}</footer>{% endif %}
+{% if not embed %}<footer><div class="in">{% block footer %}<span class="mark">{{ company }}</span><span>&copy; {{ company }} · <a href="{{ url_for('public.privacy') }}">Privacy notice for candidates</a></span>{% endblock %}</div></footer>{% endif %}
 </body>
 </html>

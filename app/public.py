@@ -130,6 +130,32 @@ def thanks(public_id):
     return render_template("public/thanks.html", applicant=applicant)
 
 
+@bp.route("/test/<token>", methods=["GET", "POST"])
+def test(token):
+    """The candidate's online technical test (unique secret link from the invitation email)."""
+    applicant = Applicant.query.filter_by(test_token=token).filter(Applicant.deleted_at.is_(None)).first_or_404()
+    role = applicant.role
+    if not (role.test_questions and role.test_questions.strip()):
+        return render_template("public/closed.html", role=role), 410
+    if applicant.test_submitted_at:
+        return render_template("public/test_done.html", applicant=applicant, already=True)
+
+    if request.method == "POST":
+        answers = (request.form.get("answers") or "").strip()
+        if len(answers) < 30:
+            flash("Please write your answers before submitting (a few sentences at least).", "error")
+            return render_template("public/test.html", applicant=applicant, role=role,
+                                   answers=answers), 400
+        applicant.test_answers = answers
+        applicant.test_submitted_at = utcnow()
+        log_event(applicant, "note", "Test answers submitted by the candidate", actor="system")
+        db.session.commit()
+        pipeline.process_test_submission(applicant.id, background=current_app.config["PROCESS_ASYNC"])
+        return render_template("public/test_done.html", applicant=applicant, already=False)
+
+    return render_template("public/test.html", applicant=applicant, role=role, answers="")
+
+
 @bp.get("/privacy")
 def privacy():
     return render_template("public/privacy.html",

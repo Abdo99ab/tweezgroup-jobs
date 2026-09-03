@@ -19,8 +19,13 @@
   <textarea name="requirements" style="min-height:220px">{{ role.requirements or '' if role else '' }}</textarea>
   <div class="hint">Not shown to candidates. Write what "good" looks like: must-haves, nice-to-haves, red flags, how to score. The agent screens every CV against this text — update it whenever the bar changes.</div>
   <label>Google Drive folder ID for this role's CVs</label><input type="text" name="drive_folder_id" value="{{ role.drive_folder_id or '' if role else '' }}" placeholder="auto: best-matching existing subfolder of TWEEZ-CV-BANK, else a new '<title> CVs' folder">
+  <label>Written technical test (optional)</label>
+  <textarea name="test_questions" style="min-height:180px" placeholder="The questions exactly as the candidate will see them. Leave empty if this role has no test — the process simply continues.">{{ role.test_questions or '' if role else '' }}</textarea>
+  <div class="hint">If filled: every applicant scoring above the selection threshold automatically receives this test by email (unique online link) and moves to TEST SENT. When they submit, Claude grades the answers against your key, the status moves to TEST RETURNED and the results are posted on the ClickUp task.</div>
+  <label>Answer key (private — used by Claude to grade)</label>
+  <textarea name="test_answer_key" style="min-height:140px" placeholder="Expected answers / grading guide, e.g. 'Q1 (30 pts): must mention X and Y…'. Never shown to candidates.">{{ role.test_answer_key or '' if role else '' }}</textarea>
   <label>ClickUp list ID (optional override)</label><input type="text" name="clickup_list_id" value="{{ role.clickup_list_id or '' if role else '' }}" placeholder="defaults to CLICKUP_LIST_ID">
-  <label class="check"><input type="checkbox" name="is_open" {% if not role or role.is_open %}checked{% endif %}> Accepting applications</label>
+  <label class="check"><input type="checkbox" name="is_open" {% if not role or role.is_open %}checked{% endif %}> Active — visible to candidates and accepting applications</label>
   <p style="margin-top:20px"><button class="btn" type="submit">Save role</button></p>
 </form></div>
 {% endblock %}

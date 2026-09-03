@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block mainclass %}narrow{% endblock %}
 {% block content %}
-<div class="card">
-<h1>Thank you, {{ applicant.full_name.split(' ')[0] }}.</h1>
+<div class="card" style="text-align:center;padding:40px 30px">
+<div style="font:600 44px/1 'Cormorant Garamond',Georgia,serif;color:var(--forest)">Merci.</div>
+<h1 style="font-size:26px;margin-top:10px">Thank you, {{ applicant.full_name.split(' ')[0] }}.</h1>
 <p>Your application for <strong>{{ applicant.role.title }}</strong> has been received. We'll review it and get back to you at <strong>{{ applicant.email }}</strong>.</p>
 <p class="muted">Reference: {{ applicant.public_id }}</p>
 </div>

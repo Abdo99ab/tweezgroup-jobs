@@ -96,5 +96,22 @@ class Config:
     SUMMARY_ENABLED = _bool("SUMMARY_ENABLED", bool(os.environ.get("ANTHROPIC_API_KEY")))
     PROCESS_ASYNC = _bool("PROCESS_ASYNC", True)  # run summary + ClickUp in a background thread after apply
 
+    # --- automatic status decisions from the CV score ---
+    AUTO_STATUS_ENABLED = _bool("AUTO_STATUS_ENABLED", True)
+    REJECT_BELOW = int(os.environ.get("REJECT_BELOW", "50"))   # score <  50            -> rejected
+    SELECT_ABOVE = int(os.environ.get("SELECT_ABOVE", "60"))   # 50 <= score <= 60      -> filtered
+                                                               # score >  60            -> selected (or test_sent if the role has a test)
+
+    # --- candidate email (test invitations) ---
+    MAIL_BACKEND = os.environ.get("MAIL_BACKEND", "smtp" if os.environ.get("MAIL_USERNAME") else "off")  # smtp | log | off
+    MAIL_SERVER = os.environ.get("MAIL_SERVER", "smtp.gmail.com")
+    MAIL_PORT = int(os.environ.get("MAIL_PORT", "587"))
+    MAIL_USERNAME = _env("MAIL_USERNAME")            # e.g. hr@tweezgroup.com
+    MAIL_PASSWORD = _env("MAIL_PASSWORD")            # Gmail App Password (Google Account -> Security -> App passwords)
+    MAIL_FROM = _env("MAIL_FROM")                    # defaults to MAIL_USERNAME
+
+    # --- ClickUp -> app webhook (two-way sync) ---
+    CLICKUP_WEBHOOK_SECRET = _env("CLICKUP_WEBHOOK_SECRET")  # printed by `flask clickup-webhook-setup`
+
     # --- GDPR ---
     RETENTION_MONTHS = int(os.environ.get("RETENTION_MONTHS", "12"))

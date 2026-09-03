@@ -78,7 +78,7 @@ def role_patch(slug):
     r = Role.query.filter_by(slug=slug).first_or_404()
     body = request.get_json(silent=True) or {}
     for field in ("title", "code", "department", "location", "employment_type", "description",
-                  "requirements", "clickup_list_id", "drive_folder_id"):
+                  "requirements", "test_questions", "test_answer_key", "clickup_list_id", "drive_folder_id"):
         if field in body:
             setattr(r, field, body[field])
     if "is_open" in body:
@@ -180,10 +180,13 @@ def applicant_patch(public_id):
 @bp.post("/applicants/<public_id>/process")
 @require_key
 def applicant_process(public_id):
-    """Re-run the auto-summary and ClickUp task/comment for one applicant."""
+    """Re-run the automation for one applicant (summary/status/task/comment, and test grading if submitted)."""
     from . import pipeline
     a = _applicant(public_id)
     done = pipeline.process_application(a.id, background=False)
+    a = _applicant(public_id)
+    if a.test_submitted_at and a.test_evaluation is None:
+        done += pipeline.process_test_submission(a.id, background=False)
     return jsonify(ok=True, steps=done, applicant=_applicant(public_id).to_dict())
 
 

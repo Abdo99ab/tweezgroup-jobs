@@ -20,10 +20,12 @@ def create_app(config_object=Config):
     from .public import bp as public_bp
     from .admin import bp as admin_bp
     from .api import bp as api_bp
+    from .webhooks import bp as webhooks_bp
 
     app.register_blueprint(public_bp)
     app.register_blueprint(admin_bp, url_prefix="/admin")
     app.register_blueprint(api_bp, url_prefix="/api/v1")
+    app.register_blueprint(webhooks_bp, url_prefix="/webhooks")
 
     @app.context_processor
     def inject_globals():
@@ -55,9 +57,29 @@ def create_app(config_object=Config):
 
     with app.app_context():
         db.create_all()
+        _auto_migrate()
 
     register_cli(app)
     return app
+
+
+def _auto_migrate():
+    """Additive migrations: add any model column missing from an existing table (SQLite/Postgres/MySQL).
+    Safe to run on every startup; never drops or alters existing columns."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(db.engine)
+    with db.engine.begin() as conn:
+        for table in db.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in existing:
+                    continue
+                ctype = col.type.compile(db.engine.dialect)
+                conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ctype}'))
+                logging.getLogger(__name__).info("auto-migrate: added %s.%s %s", table.name, col.name, ctype)
 
 
 def register_cli(app):
@@ -130,6 +152,47 @@ def register_cli(app):
         for r in Role.query.order_by(Role.title):
             click.echo(f"  {r.code:5s} {r.title:35s} /apply/{r.slug}  folder={r.drive_folder_id or 'auto'}")
 
+    @app.cli.command("clickup-webhook-setup")
+    def clickup_webhook_setup():
+        """Register the ClickUp -> app webhook (two-way status sync). Run once after deployment;
+        copy the printed secret into the CLICKUP_WEBHOOK_SECRET environment variable."""
+        import requests as rq
+        cfg = app.config
+        endpoint = f"{cfg['PUBLIC_BASE_URL']}/webhooks/clickup"
+        api = __import__("os").environ.get("CLICKUP_API_BASE", "https://api.clickup.com/api/v2")
+        headers = {"Authorization": cfg["CLICKUP_API_TOKEN"], "Content-Type": "application/json"}
+        r = rq.get(f"{api}/team/{cfg['CLICKUP_TEAM_ID']}/webhook", headers=headers, timeout=15)
+        r.raise_for_status()
+        for wh in r.json().get("webhooks", []):
+            if wh.get("endpoint") == endpoint:
+                click.echo(f"Webhook already registered: {wh['id']} -> {endpoint}")
+                click.echo(f"CLICKUP_WEBHOOK_SECRET={wh.get('secret', '(not returned — delete and re-run to get a new one)')}")
+                return
+        r = rq.post(f"{api}/team/{cfg['CLICKUP_TEAM_ID']}/webhook",
+                    json={"endpoint": endpoint, "events": ["taskStatusUpdated"]}, headers=headers, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        wh = data.get("webhook", data)
+        click.echo(f"Webhook registered: id={data.get('id') or wh.get('id')} -> {endpoint}")
+        click.echo("Add this to the environment and redeploy:")
+        click.echo(f"CLICKUP_WEBHOOK_SECRET={wh.get('secret', '')}")
+
+    @app.cli.command("sync-codes")
+    def sync_codes():
+        """Update every role's code to the agreed list (DS, VC, PROS, ...) based on its title.
+        Run once after deploying a code-mapping change; roles with a hand-edited code that
+        already matches are left alone."""
+        from .naming import code_for_title
+        changed = 0
+        for r in Role.query.order_by(Role.title):
+            want = code_for_title(r.title)
+            if r.code != want:
+                click.echo(f"  {r.title}: {r.code or '-'} -> {want}")
+                r.code = want
+                changed += 1
+        db.session.commit()
+        click.echo(f"{changed} role code(s) updated." if changed else "All role codes already correct.")
+
     @app.cli.command("purge-expired")
     @click.option("--dry-run", is_flag=True, help="List what would be deleted without deleting.")
     def purge_expired(dry_run):
@@ -153,12 +216,16 @@ def register_cli(app):
     @app.cli.command("process-pending")
     def process_pending():
         """Retry the auto-summary / ClickUp task / summary comment for applicants where it is missing."""
-        from .pipeline import pending_query, process_application
+        from .pipeline import pending_query, process_application, process_test_submission
         rows = pending_query().all()
         click.echo(f"{len(rows)} applicant(s) pending.")
         for a in rows:
-            done = process_application(a.id, background=False)
-            click.echo(f"  {a.public_id} {a.full_name}: {', '.join(done) or 'nothing changed'}")
+            aid, label = a.id, f"{a.public_id} {a.full_name}"
+            done = process_application(aid, background=False)
+            a = db.session.get(Applicant, aid)
+            if a and a.test_submitted_at and a.test_evaluation is None:
+                done += process_test_submission(aid, background=False)
+            click.echo(f"  {label}: {', '.join(done) or 'nothing changed'}")
 
     @app.cli.command("rotate-keys")
     def rotate_keys():

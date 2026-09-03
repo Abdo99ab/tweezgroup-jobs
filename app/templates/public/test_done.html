@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block mainclass %}narrow{% endblock %}
+{% block content %}
+<div class="card" style="text-align:center;padding:40px 30px">
+<div style="font:600 44px/1 'Cormorant Garamond',Georgia,serif;color:var(--forest)">Merci.</div>
+<h1 style="font-size:26px;margin-top:10px">{% if already %}Your answers were already received{% else %}Answers submitted{% endif %}, {{ applicant.full_name.split(' ')[0] }}.</h1>
+<p class="muted">Our team will review your test for the {{ applicant.role.title }} position and get back to you at {{ applicant.email }}.</p>
+</div>
+{% endblock %}

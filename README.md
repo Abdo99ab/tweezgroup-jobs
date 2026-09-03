@@ -48,18 +48,46 @@ Statuses mirror the ClickUp recruiting lists exactly, plus an internal `new` for
 | Amazon Account Manager | AAM | Sourcing Manager | SM |
 | Head of Accounting | HA | Brand Manager | BM |
 | Customer Support | CS | B2B Manager | BB |
-| Bookkeeper | BK | B2B Prospector | BP (auto) |
-| Data Scientist | DA | Chief Operating Officer | COO (auto) |
+| Bookkeeper | BK | B2B Prospector | PROS |
+| Data Scientist | DS | TikTok AI Video Creator | VC |
+| Chief Operating Officer | COO | | |
 
 Codes are stored on each role (editable in `/admin`); unknown titles get their initials. The date is the application date in Paris time, `DDMMYYYY`. `flask --app wsgi seed-roles` creates all 16 roles (closed) with codes and their Drive folders pinned — open the ones you're hiring for.
+
+### Automatic status decisions (score policy)
+
+| CV score | Status | ClickUp |
+|---|---|---|
+| below 50 | rejected | REJECTED |
+| 50 – 60 | filtered | FILTRED APPLICATION |
+| above 60, role has no test | selected | SELECTED/ IN PROGRESS |
+| above 60, role has a test | test_sent (test emailed) | TEST SENT |
+| candidate submits the test | test_returned (auto-graded) | TEST RETURNED + result comment |
+
+Thresholds are `REJECT_BELOW` / `SELECT_ABOVE` env vars; `AUTO_STATUS_ENABLED=false` turns the policy off. The policy only ever fires on applicants still in `new` — it never overrides a decision already taken by a person, the API, or ClickUp.
+
+### Written technical test per role
+
+In */admin → role form*: paste the **test questions** (exactly as candidates will see them) and the private **answer key**. Leave the questions empty and the role simply has no test. When an applicant scores above the threshold, they receive an email (Gmail SMTP — set `MAIL_USERNAME` + `MAIL_PASSWORD` App Password) with a unique one-submission link `/test/<token>`; they answer online; Claude grades the answers against the key; the status moves to TEST RETURNED and the full result (score, per-question breakdown, strengths/weaknesses/flags) is posted as a comment on the ClickUp task, tagging the team. If email isn't configured, the applicant stays in SELECTED and the test link is posted on the ClickUp task for manual sending.
+
+### Two-way ClickUp sync
+
+App → ClickUp was already automatic. For ClickUp → app, run once in the server shell:
+
+```bash
+flask --app wsgi clickup-webhook-setup     # registers the webhook, prints CLICKUP_WEBHOOK_SECRET
+```
+
+add the printed `CLICKUP_WEBHOOK_SECRET` to the environment and redeploy. From then on, dragging a task to another column on the board updates the applicant here within seconds (signature-verified; echoes of the app's own pushes are ignored, so no loops).
 
 ### Automation, step by step
 
 Right after the candidate sees the confirmation page (background thread, ~5–15 s):
 
 1. Claude summarises the CV → `score`, `ai_summary` on the record.
-2. ClickUp task created in the role's list, assignee Mehdi Mahcene, description with contact details, declared experience, Drive link to the CV, link to the admin record.
-3. Comment posted on the task with the summary, ending with `cc @Ahmidou, @Taoufik Mousselmal, @Abderrahmane Hammia` (real mentions; falls back to plain text if the API rejects the rich format).
+2. The score policy decides the status (see table above); if a test is due, it is emailed.
+3. ClickUp task created in the role's list with that status, assignee Mehdi Mahcene, description with contact details, declared experience, Drive link to the CV, link to the admin record.
+4. Comment posted on the task with the summary, ending with `cc @Ahmidou, @Taoufik Mousselmal, @Abderrahmane Hammia` (real mentions; falls back to plain text if the API rejects the rich format).
 
 Each step is idempotent. `flask --app wsgi process-pending` (or `POST /api/v1/applicants/<id>/process`, or the "Re-run" button in the admin) retries whatever is missing.
 

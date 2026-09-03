@@ -34,6 +34,17 @@
     <form method="post"><input type="hidden" name="action" value="notes">
       <label>Recruiter notes</label><textarea name="notes">{{ a.notes or '' }}</textarea>
       <p><button class="btn small secondary" type="submit">Save notes</button></p></form>
+    {% if a.test_sent_at or a.test_submitted_at %}
+    <h2>Technical test</h2>
+    <dl class="kv">
+      <dt>Sent</dt><dd>{{ a.test_sent_at.strftime('%d %b %Y %H:%M') if a.test_sent_at else '–' }}</dd>
+      <dt>Submitted</dt><dd>{{ a.test_submitted_at.strftime('%d %b %Y %H:%M') if a.test_submitted_at else 'not yet' }}</dd>
+      <dt>Test score</dt><dd><span class="score">{{ a.test_score if a.test_score is not none else '–' }}</span>{% if a.test_score is not none %}<span class="muted">/100</span>{% endif %}</dd>
+      {% if a.test_token %}<dt>Test link</dt><dd><code style="font-size:12px">{{ config.PUBLIC_BASE_URL }}/test/{{ a.test_token }}</code></dd>{% endif %}
+    </dl>
+    {% if a.test_evaluation %}<p style="white-space:pre-wrap;font-size:14px">{{ a.test_evaluation }}</p>{% endif %}
+    {% if a.test_answers %}<details><summary class="muted">Candidate's answers</summary><pre class="cv">{{ a.test_answers }}</pre></details>{% endif %}
+    {% endif %}
     <h2>Activity</h2>
     <ul class="events">{% for e in a.events.limit(30) %}<li><span class="muted">{{ e.created_at.strftime('%d %b %H:%M') }}</span> · <strong>{{ e.kind }}</strong> ({{ e.actor }}){% if e.message %} — {{ e.message }}{% endif %}</li>{% endfor %}</ul>
   </div>

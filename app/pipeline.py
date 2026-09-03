@@ -1,20 +1,30 @@
 """Post-application automation, in order:
 
   1. Claude reads the CV and writes a score + summary (if ANTHROPIC_API_KEY is set)
-  2. ClickUp task is created in the role's list, assigned to Mehdi Mahcene
-  3. The summary is posted as a comment on the task, tagging Ahmidou, Taoufik Mousselmal, Abderrahmane Hammia
+  2. The score decides the status automatically (AUTO_STATUS_ENABLED):
+       score <  REJECT_BELOW (50)          -> rejected
+       REJECT_BELOW <= score <= SELECT_ABOVE (60) -> filtered   (FILTRED APPLICATION)
+       score >  SELECT_ABOVE               -> selected  (SELECTED/ IN PROGRESS)
+         ... and if the role has a written test: the test is emailed to the candidate
+             (unique online link) and the status becomes test_sent (TEST SENT) instead.
+  3. ClickUp task is created in the role's list, assigned to Mehdi Mahcene, with that status
+  4. The summary is posted as a comment tagging Ahmidou, Taoufik Mousselmal, Abderrahmane Hammia
+
+When the candidate submits the test online, Claude grades it against the role's answer key,
+the status moves to test_returned (TEST RETURNED) and the results are posted on the ClickUp task.
 
 Runs in a background thread right after the candidate submits (PROCESS_ASYNC=true), or inline.
 Idempotent: re-running only does the steps that are still missing. `flask process-pending` retries
 anything that failed (e.g. ClickUp was down).
 """
 import logging
+import secrets
 import threading
 
 from flask import current_app
 
-from . import clickup, summarize
-from .models import Applicant, Event, db, log_event
+from . import clickup, mailer, summarize
+from .models import Applicant, Event, db, log_event, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -27,15 +37,48 @@ def process_application(applicant_id, background=True):
     return _run(app, applicant_id)
 
 
+def decide_status(applicant, cfg):
+    """The agreed score policy. Returns the target status slug, or None to leave as is."""
+    if not cfg["AUTO_STATUS_ENABLED"] or applicant.score is None:
+        return None
+    if applicant.status not in ("new",):  # never override a decision already taken (human or webhook)
+        return None
+    if applicant.score < cfg["REJECT_BELOW"]:
+        return "rejected"
+    if applicant.score <= cfg["SELECT_ABOVE"]:
+        return "filtered"
+    role = applicant.role
+    if role.test_questions and role.test_questions.strip():
+        return "test_sent"
+    return "selected"
+
+
+def send_test(a):
+    """Email the candidate their unique online test link. Returns True when the mail actually left."""
+    if not a.test_token:
+        a.test_token = secrets.token_urlsafe(24)
+    test_url = f"{current_app.config['PUBLIC_BASE_URL']}/test/{a.test_token}"
+    subject, body = mailer.test_invitation(a, test_url)
+    sent = mailer.send(a.email, subject, body)
+    if sent:
+        a.test_sent_at = utcnow()
+        log_event(a, "email_sent", f"Technical test sent to {a.email}", actor="system")
+    else:
+        log_event(a, "error", f"Test email could not be sent automatically — send this link manually: {test_url}",
+                  actor="system")
+    return sent, test_url
+
+
 def _run(app, applicant_id):
     with app.app_context():
         a = db.session.get(Applicant, applicant_id)
         if not a or a.deleted_at:
             return []
+        cfg = app.config
         done = []
         try:
             # 1. summary
-            if a.ai_summary is None and app.config["SUMMARY_ENABLED"]:
+            if a.ai_summary is None and cfg["SUMMARY_ENABLED"]:
                 try:
                     data = summarize.summarize(a)
                     if data:
@@ -48,19 +91,96 @@ def _run(app, applicant_id):
                     log_event(a, "error", f"Auto-summary failed: {exc}", actor="claude")
                 db.session.commit()
 
-            # 2. task
+            # 2. automatic status from the score (+ test dispatch)
+            target = decide_status(a, cfg)
+            if target and target != a.status:
+                test_note = ""
+                if target == "test_sent":
+                    sent, test_url = send_test(a)
+                    if not sent:
+                        target = "selected"  # candidate not notified -> don't claim the test was sent
+                        test_note = f" (test link for manual sending: {test_url})"
+                old = a.status
+                a.status = target
+                log_event(a, "status_changed",
+                          f"{old} -> {target} (auto: score {a.score}, thresholds <{cfg['REJECT_BELOW']} reject, "
+                          f">{cfg['SELECT_ABOVE']} select){test_note}", actor="claude")
+                done.append(f"auto_status:{target}")
+                db.session.commit()
+
+            # 3. ClickUp task (created with the decided status)
             if not a.clickup_task_id:
                 if clickup.create_task(a):
                     done.append("clickup_task")
                 db.session.commit()
+            elif f"auto_status:{a.status}" in done:
+                clickup.sync_status(a)
+                db.session.commit()
 
-            # 3. comment with summary + mentions (once)
+            # 4. summary comment with mentions (once)
             if a.clickup_task_id and a.ai_summary and not _has_event(a, "clickup_synced", "Summary comment"):
                 if clickup.post_comment(a, a.ai_summary, mentions=True):
                     done.append("clickup_comment")
                 db.session.commit()
+
+            # 5. manual-send note on the task if the test email failed
+            if a.clickup_task_id and a.status == "selected" and a.role.test_questions and not a.test_sent_at \
+                    and not _has_event(a, "clickup_synced", "Test link posted"):
+                url = f"{cfg['PUBLIC_BASE_URL']}/test/{a.test_token}" if a.test_token else None
+                if url and clickup.post_comment(a, f"Email is not configured — please send the candidate their test "
+                                                   f"link manually:\n{url}", mentions=False, label="Test link"):
+                    db.session.commit()
         except Exception as exc:
             log.exception("process_application failed: %s", exc)
+            db.session.rollback()
+        finally:
+            db.session.remove()
+        return done
+
+
+def process_test_submission(applicant_id, background=True):
+    """After the candidate submits: grade with Claude, move to test_returned, post results on ClickUp."""
+    app = current_app._get_current_object()
+    if background:
+        threading.Thread(target=_run_test, args=(app, applicant_id), daemon=True).start()
+        return ["queued"]
+    return _run_test(app, applicant_id)
+
+
+def _run_test(app, applicant_id):
+    with app.app_context():
+        a = db.session.get(Applicant, applicant_id)
+        if not a or a.deleted_at or not a.test_submitted_at:
+            return []
+        done = []
+        try:
+            if a.test_evaluation is None:
+                try:
+                    data = summarize.evaluate_test(a)
+                    if data:
+                        a.test_score = data["score"]
+                        a.test_evaluation = summarize.format_test_result(a, data)
+                        log_event(a, "scored", f"Test graded: {a.test_score}/100 ({data.get('verdict')})", actor="claude")
+                        done.append("test_graded")
+                except Exception as exc:
+                    log.warning("Test evaluation failed for %s: %s", a.public_id, exc)
+                    log_event(a, "error", f"Test evaluation failed: {exc}", actor="claude")
+                db.session.commit()
+
+            if a.status in ("test_sent", "selected"):
+                old = a.status
+                a.status = "test_returned"
+                log_event(a, "status_changed", f"{old} -> test_returned (test submitted)", actor="system")
+                clickup.sync_status(a)
+                done.append("test_returned")
+                db.session.commit()
+
+            if a.clickup_task_id and a.test_evaluation and not _has_event(a, "clickup_synced", "Test result"):
+                if clickup.post_comment(a, a.test_evaluation, mentions=True, label="Test result"):
+                    done.append("clickup_test_comment")
+                db.session.commit()
+        except Exception as exc:
+            log.exception("process_test_submission failed: %s", exc)
             db.session.rollback()
         finally:
             db.session.remove()
@@ -73,7 +193,8 @@ def _has_event(a, kind, message_prefix):
 
 
 def pending_query():
-    """Applicants still missing a summary, a task, or the summary comment."""
+    """Applicants still missing a summary, a task, or a grade for a submitted test."""
     return Applicant.query.filter(Applicant.deleted_at.is_(None)).filter(
-        db.or_(Applicant.clickup_task_id.is_(None), Applicant.ai_summary.is_(None))
+        db.or_(Applicant.clickup_task_id.is_(None), Applicant.ai_summary.is_(None),
+               db.and_(Applicant.test_submitted_at.isnot(None), Applicant.test_evaluation.is_(None)))
     ).order_by(Applicant.created_at.asc())

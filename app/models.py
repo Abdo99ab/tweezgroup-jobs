@@ -65,6 +65,8 @@ class Role(db.Model):
     is_open = db.Column(db.Boolean, default=True, nullable=False)
     clickup_list_id = db.Column(db.String(60))  # overrides the default pipeline list
     drive_folder_id = db.Column(db.String(120))  # Google Drive subfolder for this role's CVs (auto-created if empty)
+    test_questions = db.Column(db.Text)          # written technical test sent to candidates scoring > SELECT_ABOVE
+    test_answer_key = db.Column(db.Text)         # private answer key Claude grades against (never shown to candidates)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -84,6 +86,8 @@ class Role(db.Model):
             "is_open": self.is_open,
             "clickup_list_id": self.clickup_list_id,
             "drive_folder_id": self.drive_folder_id,
+            "has_test": bool(self.test_questions and self.test_questions.strip()),
+            "test_questions": self.test_questions,
             "created_at": self.created_at.isoformat() + "Z",
             "updated_at": self.updated_at.isoformat() + "Z",
         }
@@ -119,8 +123,15 @@ class Applicant(db.Model):
     score = db.Column(db.Integer)            # 0-100, set by the agent
     ai_summary = db.Column(db.Text)          # agent's screening summary
     notes = db.Column(db.Text)               # recruiter notes
-    clickup_task_id = db.Column(db.String(60))
+    clickup_task_id = db.Column(db.String(60), index=True)
     clickup_task_url = db.Column(db.String(300))
+
+    test_token = db.Column(db.String(48), unique=True)   # secret link for the candidate's online test
+    test_sent_at = db.Column(db.DateTime)
+    test_submitted_at = db.Column(db.DateTime)
+    test_answers = db.Column(db.Text)
+    test_score = db.Column(db.Integer)                   # 0-100, graded by Claude against the answer key
+    test_evaluation = db.Column(db.Text)                 # per-question feedback
 
     consent_at = db.Column(db.DateTime)
     retention_until = db.Column(db.DateTime, index=True)
@@ -159,6 +170,11 @@ class Applicant(db.Model):
             "notes": self.notes,
             "clickup_task_id": self.clickup_task_id,
             "clickup_task_url": self.clickup_task_url,
+            "test": {
+                "sent_at": self.test_sent_at.isoformat() + "Z" if self.test_sent_at else None,
+                "submitted_at": self.test_submitted_at.isoformat() + "Z" if self.test_submitted_at else None,
+                "score": self.test_score,
+            } if self.test_sent_at else None,
             "consent_at": self.consent_at.isoformat() + "Z" if self.consent_at else None,
             "retention_until": self.retention_until.isoformat() + "Z" if self.retention_until else None,
             "created_at": self.created_at.isoformat() + "Z",

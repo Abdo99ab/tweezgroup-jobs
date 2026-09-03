@@ -1,5 +1,5 @@
 {% extends "base.html" %}
 {% block mainclass %}narrow{% endblock %}
 {% block content %}
-<div class="card"><h1>{{ role.title }}</h1><p>This position is no longer accepting applications.</p><a href="{{ url_for('public.jobs') }}">See open positions</a></div>
+<div class="card"><h1>{{ role.title }}</h1><p>Applications for this position are currently paused. Check back soon, or take a look at our other open positions.</p><a href="{{ url_for('public.jobs') }}">See open positions</a></div>
 {% endblock %}

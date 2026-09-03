@@ -183,7 +183,15 @@ update_task_status = sync_status  # backwards-compatible alias
 
 # -------------------------------------------------------------------------------------- comments
 
-def post_comment(applicant, text, mentions=True):
+REVERSE_STATUS_MAP = {v.lower(): k for k, v in STATUS_MAP.items()}
+
+
+def status_from_clickup(name):
+    """ClickUp status name -> our slug (case-insensitive), or None if unknown."""
+    return REVERSE_STATUS_MAP.get((name or "").strip().lower())
+
+
+def post_comment(applicant, text, mentions=True, label="Summary comment"):
     """Post a comment on the applicant's task. With mentions=True the configured people are @-tagged.
 
     ClickUp's rich comment format (`comment` array with type=tag items) renders real mentions; if the
@@ -202,13 +210,13 @@ def post_comment(applicant, text, mentions=True):
             r = requests.post(url, json={"comment": parts, "notify_all": True}, headers=_headers(), timeout=15)
             if r.status_code < 400:
                 log_event(applicant, "clickup_synced",
-                          "Summary comment posted, tagged " + ", ".join(n for n, _ in tagged))
+                          f"{label} posted, tagged " + ", ".join(n for n, _ in tagged))
                 return r.json()
             log.warning("ClickUp rich comment rejected (%s): %s — falling back to plain text", r.status_code, r.text[:200])
         plain = text + ("\n\ncc " + ", ".join(f"@{n}" for n, _ in tagged) if tagged else "")
         r = requests.post(url, json={"comment_text": plain, "notify_all": True}, headers=_headers(), timeout=15)
         r.raise_for_status()
-        log_event(applicant, "clickup_synced", "Summary comment posted (plain text)")
+        log_event(applicant, "clickup_synced", f"{label} posted (plain text)")
         return r.json()
     except Exception as exc:
         log.warning("ClickUp comment failed: %s", exc)
