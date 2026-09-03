@@ -61,7 +61,11 @@ services:
       - key: MAIL_PASSWORD
         sync: false
       - key: MAIL_FROM
-        sync: false
+        value: hr@tweezgroup.com
+      - key: CLICKUP_WEBHOOK_AUTOREGISTER
+        value: "true"
+      - key: CLICKUP_POLL_MINUTES
+        value: "10"
       - key: CLICKUP_WEBHOOK_SECRET
         sync: false
       - key: FRAME_ANCESTORS

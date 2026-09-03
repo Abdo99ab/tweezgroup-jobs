@@ -1,0 +1,2302 @@
+From 745144744ef9804d968130f240553c73bcd04e5d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 2 Sep 2026 11:52:31 +0000
+Subject: [PATCH 1/4] Dashboard Active/Paused one-click toggle + agreed role
+ codes (DS, VC, PROS, COO) with sync-codes migration
+
+- One-click Pause/Activate button per role on /admin dashboard; paused roles are hidden
+  from /jobs, their direct apply link shows a 'currently paused' page (410), API open
+  filter consistent. Code column added to the roles table.
+- Role codes updated to the agreed list: Data Scientist DA->DS, TikTok AI Video Creators
+  TAVC->VC, B2B Prospector BP->PROS, COO explicit; others unchanged (HM, TTS, AAM, HA,
+  CS, BK, GD, CC, SM, BM, BB).
+- New 'flask --app wsgi sync-codes' command updates codes of roles already in the
+  database (run once on the server after deploying).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JcN7fd3GzJkJXg5WQpuUjU
+---
+ app/__init__.py                    | 16 ++++++++++++++++
+ app/admin.py                       | 12 ++++++++++++
+ app/naming.py                      | 10 ++++++++--
+ app/templates/admin/dashboard.html | 13 ++++++++++---
+ app/templates/admin/role_form.html |  2 +-
+ app/templates/public/closed.html   |  2 +-
+ 6 files changed, 48 insertions(+), 7 deletions(-)
+
+diff --git a/app/__init__.py b/app/__init__.py
+index 2140e32..591bfd8 100644
+--- a/app/__init__.py
++++ b/app/__init__.py
+@@ -130,6 +130,22 @@ def register_cli(app):
+         for r in Role.query.order_by(Role.title):
+             click.echo(f"  {r.code:5s} {r.title:35s} /apply/{r.slug}  folder={r.drive_folder_id or 'auto'}")
+ 
++    @app.cli.command("sync-codes")
++    def sync_codes():
++        """Update every role's code to the agreed list (DS, VC, PROS, ...) based on its title.
++        Run once after deploying a code-mapping change; roles with a hand-edited code that
++        already matches are left alone."""
++        from .naming import code_for_title
++        changed = 0
++        for r in Role.query.order_by(Role.title):
++            want = code_for_title(r.title)
++            if r.code != want:
++                click.echo(f"  {r.title}: {r.code or '-'} -> {want}")
++                r.code = want
++                changed += 1
++        db.session.commit()
++        click.echo(f"{changed} role code(s) updated." if changed else "All role codes already correct.")
++
+     @app.cli.command("purge-expired")
+     @click.option("--dry-run", is_flag=True, help="List what would be deleted without deleting.")
+     def purge_expired(dry_run):
+diff --git a/app/admin.py b/app/admin.py
+index 6f7ce4d..7c7e100 100644
+--- a/app/admin.py
++++ b/app/admin.py
+@@ -100,6 +100,18 @@ def _save_role(role):
+     return redirect(url_for("admin.applicants", role=role.slug))
+ 
+ 
++@bp.post("/roles/<int:role_id>/toggle")
++@login_required
++def role_toggle(role_id):
++    """One-click Active/Paused switch from the dashboard: paused roles disappear from /jobs
++    and their direct apply link shows the 'paused' page. Existing applicants are untouched."""
++    role = Role.query.get_or_404(role_id)
++    role.is_open = not role.is_open
++    db.session.commit()
++    flash(f"{role.title} is now {'ACTIVE — visible to candidates' if role.is_open else 'PAUSED — hidden from candidates'}.", "ok")
++    return redirect(request.referrer or url_for("admin.dashboard"))
++
++
+ # ---------- applicants ----------
+ 
+ @bp.get("/applicants")
+diff --git a/app/naming.py b/app/naming.py
+index 7765cc8..451471d 100644
+--- a/app/naming.py
++++ b/app/naming.py
+@@ -17,12 +17,18 @@ ROLE_CODES = {
+     "head accountant": "HA",
+     "customer support": "CS",
+     "bookkeeper": "BK",
+-    "data scientist": "DA",
++    "data scientist": "DS",
+     "graphic designer": "GD",
+     "content creator": "CC",
+     "sourcing manager": "SM",
+     "brand manager": "BM",
+     "b2b manager": "BB",
++    "b2b prospector": "PROS",
++    "tiktok ai video creator": "VC",
++    "chief operation officer": "COO",
++    "chief operating officer coo": "COO",
++    "chief operation officer coo": "COO",
++    "chief operating officer": "COO",
+ }
+ 
+ # TWEEZ-CV-BANK subfolders as they exist today (id -> name), so known roles are pinned exactly.
+@@ -66,7 +72,7 @@ def normalize(text):
+ 
+ 
+ def code_for_title(title):
+-    """Agreed code if the title is known, else initials (Chief Operation Officer -> COO, B2B Prospector -> BP)."""
++    """Agreed code if the title is known (HM, TTS, AAM, HA, CS, BK, DS, GD, CC, SM, BM, BB, PROS, VC, COO), else initials."""
+     norm = normalize(title)
+     if norm in ROLE_CODES:
+         return ROLE_CODES[norm]
+diff --git a/app/templates/admin/dashboard.html b/app/templates/admin/dashboard.html
+index 55c02e2..33fd220 100644
+--- a/app/templates/admin/dashboard.html
++++ b/app/templates/admin/dashboard.html
+@@ -7,12 +7,19 @@
+   {% for s in statuses %}<a class="stat" href="{{ url_for('admin.applicants', status=s) }}"><div class="n">{{ counts[s] }}</div><div class="l"><span class="pill {{ s }}">{{ labels[s] }}</span></div></a>{% endfor %}
+ </div>
+ <h2>Roles</h2>
+-<table><tr><th>Role</th><th>Location</th><th>Applicants</th><th>Status</th><th>Apply link</th><th></th></tr>
++<table><tr><th>Role</th><th>Code</th><th>Applicants</th><th>Visibility</th><th>Apply link</th><th></th></tr>
+ {% for r in roles %}<tr>
+   <td><a href="{{ url_for('admin.applicants', role=r.slug) }}"><strong>{{ r.title }}</strong></a><br><span class="muted">{{ r.department or '' }}</span></td>
+-  <td>{{ r.location or '-' }}</td>
++  <td><code>{{ r.code or '-' }}</code></td>
+   <td>{{ r.applicants.filter_by(deleted_at=None).count() }}</td>
+-  <td>{% if r.is_open %}<span class="pill hired">open</span>{% else %}<span class="pill rejected">closed</span>{% endif %}</td>
++  <td class="row" style="gap:8px;flex-wrap:nowrap">
++    {% if r.is_open %}<span class="pill hired">ACTIVE</span>{% else %}<span class="pill rejected">PAUSED</span>{% endif %}
++    <form method="post" action="{{ url_for('admin.role_toggle', role_id=r.id) }}" style="display:inline">
++      <button class="btn small {{ 'danger' if r.is_open else '' }}" type="submit"
++              title="{{ 'Hide this role from candidates' if r.is_open else 'Show this role to candidates' }}">
++        {{ 'Pause' if r.is_open else 'Activate' }}</button>
++    </form>
++  </td>
+   <td><code style="font-size:12px">{{ config.PUBLIC_BASE_URL }}/apply/{{ r.slug }}</code><br>
+       <details><summary class="muted" style="font-size:12px;cursor:pointer">embed on a website</summary>
+       <textarea readonly style="font-size:11px;min-height:60px" onclick="this.select()">&lt;iframe src="{{ config.PUBLIC_BASE_URL }}/apply/{{ r.slug }}?embed=1" style="width:100%;min-height:1150px;border:0" title="Apply — {{ r.title }}"&gt;&lt;/iframe&gt;</textarea></details></td>
+diff --git a/app/templates/admin/role_form.html b/app/templates/admin/role_form.html
+index e699290..9a6b214 100644
+--- a/app/templates/admin/role_form.html
++++ b/app/templates/admin/role_form.html
+@@ -20,7 +20,7 @@
+   <div class="hint">Not shown to candidates. Write what "good" looks like: must-haves, nice-to-haves, red flags, how to score. The agent screens every CV against this text — update it whenever the bar changes.</div>
+   <label>Google Drive folder ID for this role's CVs</label><input type="text" name="drive_folder_id" value="{{ role.drive_folder_id or '' if role else '' }}" placeholder="auto: best-matching existing subfolder of TWEEZ-CV-BANK, else a new '<title> CVs' folder">
+   <label>ClickUp list ID (optional override)</label><input type="text" name="clickup_list_id" value="{{ role.clickup_list_id or '' if role else '' }}" placeholder="defaults to CLICKUP_LIST_ID">
+-  <label class="check"><input type="checkbox" name="is_open" {% if not role or role.is_open %}checked{% endif %}> Accepting applications</label>
++  <label class="check"><input type="checkbox" name="is_open" {% if not role or role.is_open %}checked{% endif %}> Active — visible to candidates and accepting applications</label>
+   <p style="margin-top:20px"><button class="btn" type="submit">Save role</button></p>
+ </form></div>
+ {% endblock %}
+diff --git a/app/templates/public/closed.html b/app/templates/public/closed.html
+index 5ea825d..fcac6ce 100644
+--- a/app/templates/public/closed.html
++++ b/app/templates/public/closed.html
+@@ -1,5 +1,5 @@
+ {% extends "base.html" %}
+ {% block mainclass %}narrow{% endblock %}
+ {% block content %}
+-<div class="card"><h1>{{ role.title }}</h1><p>This position is no longer accepting applications.</p><a href="{{ url_for('public.jobs') }}">See open positions</a></div>
++<div class="card"><h1>{{ role.title }}</h1><p>Applications for this position are currently paused. Check back soon, or take a look at our other open positions.</p><a href="{{ url_for('public.jobs') }}">See open positions</a></div>
+ {% endblock %}
+-- 
+2.43.0
+
+
+From 12d6faa6b541a475bdabaeb8bccdd79fb2ef4b36 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 2 Sep 2026 11:52:31 +0000
+Subject: [PATCH 2/4] Tweezgroup brand redesign: forest green + gold, Cormorant
+ Garamond display, logo/favicon
+
+- Full restyle of base.html around the brand logo: deep green header/footer with gold
+  letterspaced wordmark, warm ivory ground, serif display type, branded buttons, focus
+  states, status pill palette tuned to the identity.
+- Careers page hero, apply page eyebrow, branded login card with logo, warmer
+  confirmation page. Logo shipped as app/static/logo.jpg + favicon.
+- No behaviour changes; all templates keep their routes and fields.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JcN7fd3GzJkJXg5WQpuUjU
+---
+ app/static/favicon.png           | Bin 0 -> 2722 bytes
+ app/static/logo.jpg              | Bin 0 -> 20086 bytes
+ app/templates/admin/login.html   |  11 ++-
+ app/templates/base.html          | 152 +++++++++++++++++++++----------
+ app/templates/public/apply.html  |   3 +-
+ app/templates/public/jobs.html   |   9 +-
+ app/templates/public/thanks.html |   5 +-
+ 7 files changed, 121 insertions(+), 59 deletions(-)
+ create mode 100644 app/static/favicon.png
+ create mode 100644 app/static/logo.jpg
+
+diff --git a/app/static/favicon.png b/app/static/favicon.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..ef8714b9c7b9a7d9ba219d74d282df036cc8d7c3
+GIT binary patch
+literal 2722
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/app/static/logo.jpg b/app/static/logo.jpg
+new file mode 100644
+index 0000000000000000000000000000000000000000..d9dd73d8c022cef9f672f6dbfce9df609f5e3add
+GIT binary patch
+literal 20086
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/app/templates/admin/login.html b/app/templates/admin/login.html
+index 694581a..0d36c26 100644
+--- a/app/templates/admin/login.html
++++ b/app/templates/admin/login.html
+@@ -2,12 +2,13 @@
+ {% block title %}Admin login{% endblock %}
+ {% block mainclass %}narrow{% endblock %}
+ {% block content %}
+-<div class="card" style="max-width:380px;margin:40px auto">
+-<h1>Recruiter login</h1>
++<div class="card" style="max-width:400px;margin:48px auto;text-align:center;padding:34px 30px">
++<img src="{{ url_for('static', filename='logo.jpg') }}" alt="{{ company }}" width="88" height="88" style="border-radius:14px;margin-bottom:14px">
++<h1 style="font-size:28px">Recruiter login</h1>
++<div style="text-align:left">
+ <form method="post">
+   <label>Username</label><input type="text" name="username" autofocus>
+   <label>Password</label><input type="password" name="password">
+-  <p style="margin-top:18px"><button class="btn" type="submit">Log in</button></p>
+-</form></div>
++  <p style="margin-top:20px"><button class="btn" type="submit" style="width:100%">Log in</button></p>
++</form></div></div>
+ {% endblock %}
+-{% block footer %}{% endblock %}
+diff --git a/app/templates/base.html b/app/templates/base.html
+index 6d36f9a..34a4594 100644
+--- a/app/templates/base.html
++++ b/app/templates/base.html
+@@ -4,61 +4,117 @@
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <title>{% block title %}{{ company }} — Careers{% endblock %}</title>
++<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
++<link rel="preconnect" href="https://fonts.googleapis.com">
++<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+ <style>
+-  :root{--bg:#f6f7f9;--card:#fff;--ink:#1a1d23;--muted:#666d7a;--line:#e3e6eb;--accent:#1f5eff;--accent-ink:#fff;--ok:#1a7f4b;--err:#c0392b;--warn:#b26a00}
++  :root{
++    --forest:#12301c;         /* deepest green — footer, hovers */
++    --forest-2:#173d24;       /* logo green — header, buttons */
++    --forest-3:#1f4a2e;       /* raised green */
++    --gold:#ede9a0;           /* wordmark gold */
++    --gold-soft:#f4ffb4;      /* logo highlight */
++    --gold-deep:#a3934a;      /* gold on light ground */
++    --paper:#f5f4ea;          /* warm ivory ground */
++    --card:#fffdf6;
++    --ink:#1a241c;
++    --muted:#66715f;
++    --line:#e1e0cd;
++    --err:#a33d2e;--err-bg:#f9e9e4;--ok:#2c6e46;--ok-bg:#e8f1e6;
++  }
+   *{box-sizing:border-box}
+-  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+-  a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+-  header.top{background:#fff;border-bottom:1px solid var(--line)}
+-  header.top .in{max-width:1100px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:20px}
+-  header.top .brand{font-weight:700;font-size:17px;color:var(--ink)}
+-  header.top nav a{margin-right:16px;color:var(--muted)}header.top nav a.active{color:var(--ink);font-weight:600}
+-  main{max-width:1100px;margin:0 auto;padding:28px 20px}
+-  main.narrow{max-width:720px}
+-  body.embed main{padding:8px 4px}
+-  h1{font-size:26px;margin:0 0 6px}h2{font-size:18px;margin:26px 0 10px}
++  body{margin:0;font:15.5px/1.6 Figtree,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--paper);color:var(--ink)}
++  a{color:var(--forest-3);text-decoration:none}a:hover{color:var(--forest);text-decoration:underline;text-decoration-color:var(--gold-deep)}
++  ::selection{background:var(--gold);color:var(--forest)}
++
++  /* ---------- header ---------- */
++  header.top{background:var(--forest-2);border-bottom:3px solid var(--gold);box-shadow:0 1px 0 rgba(18,48,28,.25)}
++  header.top .in{max-width:1100px;margin:0 auto;padding:16px 20px;display:flex;align-items:center;gap:26px}
++  header.top .brand{font:700 19px/1 "Cormorant Garamond",Georgia,serif;letter-spacing:.34em;color:var(--gold);text-transform:uppercase;text-decoration:none}
++  header.top .brand:hover{color:var(--gold-soft);text-decoration:none}
++  header.top nav{display:flex;flex-wrap:wrap;gap:2px}
++  header.top nav a{padding:7px 12px;border-radius:7px;color:#cfd8c6;font-size:14px;font-weight:500}
++  header.top nav a:hover{color:var(--gold-soft);background:rgba(244,255,180,.08);text-decoration:none}
++  header.top nav a.active{color:var(--gold);background:rgba(244,255,180,.12);font-weight:600}
++
++  main{max-width:1100px;margin:0 auto;padding:34px 20px}
++  main.narrow{max-width:730px}
++  body.embed main{padding:10px 6px}
++
++  h1{font:600 clamp(28px,4vw,38px)/1.12 "Cormorant Garamond",Georgia,serif;letter-spacing:.01em;color:var(--forest);margin:0 0 8px;text-wrap:balance}
++  h2{font:600 22px/1.2 "Cormorant Garamond",Georgia,serif;color:var(--forest);margin:28px 0 12px}
+   .muted{color:var(--muted)}
+-  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:22px;margin-bottom:18px}
+-  label{display:block;font-weight:600;margin:14px 0 6px}
+-  input[type=text],input[type=email],input[type=tel],input[type=url],input[type=password],select,textarea{width:100%;padding:10px 12px;border:1px solid #cfd4dc;border-radius:8px;font:inherit;background:#fff}
++  code{font:13px/1.5 "IBM Plex Mono",ui-monospace,Menlo,monospace}
++
++  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;margin-bottom:18px;box-shadow:0 1px 3px rgba(26,36,28,.05)}
++
++  /* ---------- forms ---------- */
++  label{display:block;font-weight:600;margin:15px 0 6px;font-size:14.5px}
++  input[type=text],input[type=email],input[type=tel],input[type=url],input[type=number],input[type=password],select,textarea{
++    width:100%;padding:11px 13px;border:1px solid #cfceba;border-radius:9px;font:inherit;background:#fff;color:var(--ink);transition:border-color .15s, box-shadow .15s}
++  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--forest-3);box-shadow:0 0 0 3px rgba(31,74,46,.14)}
+   textarea{min-height:110px;resize:vertical}
+-  input[type=file]{margin-top:4px}
+-  .btn{display:inline-block;padding:10px 18px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);font-weight:600;cursor:pointer;font:inherit}
+-  .btn.secondary{background:#fff;color:var(--ink);border-color:#cfd4dc}
+-  .btn.danger{background:#fff;color:var(--err);border-color:var(--err)}
+-  .btn.small{padding:6px 12px;font-size:13px}
+-  .flash{padding:10px 14px;border-radius:8px;margin-bottom:10px}
+-  .flash.error{background:#fdecea;color:var(--err)}.flash.ok{background:#e6f5ec;color:var(--ok)}
+-  .hint{font-size:13px;color:var(--muted);margin-top:4px}
+-  .check{display:flex;gap:10px;align-items:flex-start;margin-top:16px;font-weight:400}
+-  .check input{margin-top:5px}
+-  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+-  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;font-size:14px}
+-  th{background:#fafbfc;font-weight:600;color:var(--muted);font-size:13px}
++  input[type=file]{margin-top:4px;font-size:14px}
++  .btn{display:inline-block;padding:11px 22px;border-radius:9px;border:1px solid var(--forest-2);background:var(--forest-2);color:var(--gold);font-weight:600;letter-spacing:.02em;cursor:pointer;font:inherit;transition:background .15s}
++  .btn:hover{background:var(--forest);color:var(--gold-soft);text-decoration:none}
++  .btn.secondary{background:transparent;color:var(--forest-2);border-color:#b9bda6}
++  .btn.secondary:hover{background:#ecebdc;color:var(--forest)}
++  .btn.danger{background:transparent;color:var(--err);border-color:var(--err)}
++  .btn.danger:hover{background:var(--err-bg)}
++  .btn.small{padding:6px 13px;font-size:13px}
++  .btn:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--gold-deep);outline-offset:2px}
++
++  .flash{padding:11px 15px;border-radius:9px;margin-bottom:10px;font-size:14.5px}
++  .flash.error{background:var(--err-bg);color:var(--err);border-left:3px solid var(--err)}
++  .flash.ok{background:var(--ok-bg);color:var(--ok);border-left:3px solid var(--ok)}
++  .hint{font-size:13px;color:var(--muted);margin-top:5px}
++  .check{display:flex;gap:11px;align-items:flex-start;margin-top:18px;font-weight:400;font-size:14.5px}
++  .check input{margin-top:4px;accent-color:var(--forest-2);width:16px;height:16px}
++
++  /* ---------- tables ---------- */
++  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
++  th,td{padding:11px 13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;font-size:14px}
++  th{background:#eeedde;font:600 12px/1.5 Figtree,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#5c664f}
+   tr:last-child td{border-bottom:0}
+-  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;background:#eef1f5;color:#444}
+-  .pill.new{background:#eef1f5;color:#555}
+-  .pill.filtered{background:#e8efff;color:#1f4fd6}
+-  .pill.selected{background:#e0f7f5;color:#0b6e66}
+-  .pill.test_sent{background:#efe9ff;color:#5b34c9}
+-  .pill.test_returned{background:#fff4e0;color:#9a5b00}
+-  .pill.interview_done{background:#e3f0ff;color:#0f5cb5}
+-  .pill.interview2_done{background:#dbe8ff;color:#0a48a0}
+-  .pill.contract_sent{background:#ffeede;color:#b24a00}
+-  .pill.rejected{background:#fdecea;color:#c0392b}
+-  .pill.hired{background:#1a7f4b;color:#fff}
++  tbody tr:hover td, table tr:hover td{background:#fbfaf0}
++  td{font-variant-numeric:tabular-nums}
++
++  /* ---------- status pills ---------- */
++  .pill{display:inline-block;padding:3px 11px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.05em;background:#eceadb;color:#57614e;white-space:nowrap}
++  .pill.new{background:#e7e6d5;color:#5c664f}
++  .pill.filtered{background:#e2ecdf;color:#2c6e46}
++  .pill.selected{background:#dcebe6;color:#1f5c4b}
++  .pill.test_sent{background:#e9e4f2;color:#5b4a8a}
++  .pill.test_returned{background:#f4ecd6;color:#8a6d1f}
++  .pill.interview_done{background:#dfe8f2;color:#2c5578}
++  .pill.interview2_done{background:#d3e0ef;color:#1f4468}
++  .pill.contract_sent{background:#f6e7d4;color:#93591c}
++  .pill.rejected{background:#f2e2dd;color:#a33d2e}
++  .pill.hired{background:var(--forest-2);color:var(--gold)}
++
++  /* ---------- layout helpers ---------- */
+   .grid{display:grid;gap:14px}.grid.cols-4{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.grid.cols-2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+-  .stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+-  .stat .n{font-size:26px;font-weight:700}.stat .l{font-size:13px;color:var(--muted)}
+-  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
+-  .filters label{margin:0 0 4px;font-size:13px}
++  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px 17px;transition:border-color .15s}
++  a.stat:hover{border-color:var(--gold-deep);text-decoration:none}
++  .stat .n{font:600 30px/1 "Cormorant Garamond",Georgia,serif;color:var(--forest)}
++  .stat .l{font-size:13px;color:var(--muted);margin-top:5px}
++  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
++  .filters label{margin:0 0 4px;font-size:12.5px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
+   .filters input,.filters select{width:auto;min-width:160px}
+-  pre.cv{white-space:pre-wrap;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:14px;max-height:520px;overflow:auto}
++  pre.cv{white-space:pre-wrap;font:13px/1.6 "IBM Plex Mono",ui-monospace,Menlo,monospace;background:#f2f1e3;border:1px solid var(--line);border-radius:10px;padding:16px;max-height:520px;overflow:auto}
+   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+-  .kv{display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:14px}.kv dt{color:var(--muted)}.kv dd{margin:0}
+-  footer{max-width:1100px;margin:30px auto;padding:0 20px;color:var(--muted);font-size:13px}
+-  .events li{font-size:13px;margin-bottom:4px}
+-  .score{font-weight:700}
++  .kv{display:grid;grid-template-columns:150px 1fr;gap:7px 12px;font-size:14px}.kv dt{color:var(--muted)}.kv dd{margin:0;overflow-wrap:anywhere}
++  .events li{font-size:13px;margin-bottom:5px;color:#414b3f}
++  .score{font-weight:700;color:var(--forest)}
++  details summary{cursor:pointer}
++
++  footer{background:var(--forest-2);border-top:3px solid var(--gold);margin-top:48px}
++  footer .in{max-width:1100px;margin:0 auto;padding:22px 20px;color:#b9c5ae;font-size:13.5px;display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
++  footer a{color:var(--gold)}footer a:hover{color:var(--gold-soft)}
++  footer .mark{font:700 13px/1 "Cormorant Garamond",Georgia,serif;letter-spacing:.3em;color:var(--gold);text-transform:uppercase}
++
++  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
++  @media (max-width:640px){header.top .in{flex-direction:column;align-items:flex-start;gap:10px}.kv{grid-template-columns:120px 1fr}}
+ </style>
+ </head>
+ <body class="{{ 'embed' if embed }}">
+@@ -72,6 +128,6 @@
+   {% endwith %}
+   {% block content %}{% endblock %}
+ </main>
+-{% if not embed %}<footer>{% block footer %}&copy; {{ company }} · <a href="{{ url_for('public.privacy') }}">Privacy notice for candidates</a>{% endblock %}</footer>{% endif %}
++{% if not embed %}<footer><div class="in">{% block footer %}<span class="mark">{{ company }}</span><span>&copy; {{ company }} · <a href="{{ url_for('public.privacy') }}">Privacy notice for candidates</a></span>{% endblock %}</div></footer>{% endif %}
+ </body>
+ </html>
+diff --git a/app/templates/public/apply.html b/app/templates/public/apply.html
+index f5089cb..855bb0d 100644
+--- a/app/templates/public/apply.html
++++ b/app/templates/public/apply.html
+@@ -3,8 +3,9 @@
+ {% block mainclass %}narrow{% endblock %}
+ {% block content %}
+ {% if not embed %}<p><a href="{{ url_for('public.jobs') }}">&larr; All positions</a></p>{% endif %}
++<p class="muted" style="letter-spacing:.22em;text-transform:uppercase;font-size:12px;margin:14px 0 6px">We're hiring</p>
+ <h1>{{ role.title }}</h1>
+-<p class="muted">{{ [role.department, role.location, role.employment_type]|select|join(' · ') }}</p>
++<p class="muted" style="letter-spacing:.08em;text-transform:uppercase;font-size:12px">{{ [role.department, role.location, role.employment_type]|select|join(' · ') }}</p>
+ {% if role.description %}<div class="card">{{ role.description|replace('\n','<br>')|safe }}</div>{% endif %}
+ 
+ <div class="card">
+diff --git a/app/templates/public/jobs.html b/app/templates/public/jobs.html
+index a3918b6..fdece3e 100644
+--- a/app/templates/public/jobs.html
++++ b/app/templates/public/jobs.html
+@@ -1,13 +1,16 @@
+ {% extends "base.html" %}
+ {% block mainclass %}narrow{% endblock %}
+ {% block content %}
+-<h1>Open positions</h1>
+-<p class="muted">Apply directly below — we read every application.</p>
++<div style="text-align:center;padding:14px 0 26px">
++  <p class="muted" style="letter-spacing:.22em;text-transform:uppercase;font-size:12px;margin:0 0 10px">Careers at {{ company }}</p>
++  <h1>Grow with our brands</h1>
++  <p class="muted" style="max-width:52ch;margin:6px auto 0">We build consumer brands across Europe and the US. Apply directly below — every application is read.</p>
++</div>
+ {% if not roles %}<div class="card">No open positions right now. Check back soon.</div>{% endif %}
+ {% for r in roles %}
+ <div class="card">
+   <h2 style="margin-top:0">{{ r.title }}</h2>
+-  <p class="muted">{{ [r.department, r.location, r.employment_type]|select|join(' · ') }}</p>
++  <p class="muted" style="letter-spacing:.08em;text-transform:uppercase;font-size:12px;margin-top:-6px">{{ [r.department, r.location, r.employment_type]|select|join(' · ') }}</p>
+   {% if r.description %}<p>{{ r.description }}</p>{% endif %}
+   <a class="btn" href="{{ url_for('public.apply', slug=r.slug) }}">Apply</a>
+ </div>
+diff --git a/app/templates/public/thanks.html b/app/templates/public/thanks.html
+index 7584c86..b480ed7 100644
+--- a/app/templates/public/thanks.html
++++ b/app/templates/public/thanks.html
+@@ -1,8 +1,9 @@
+ {% extends "base.html" %}
+ {% block mainclass %}narrow{% endblock %}
+ {% block content %}
+-<div class="card">
+-<h1>Thank you, {{ applicant.full_name.split(' ')[0] }}.</h1>
++<div class="card" style="text-align:center;padding:40px 30px">
++<div style="font:600 44px/1 'Cormorant Garamond',Georgia,serif;color:var(--forest)">Merci.</div>
++<h1 style="font-size:26px;margin-top:10px">Thank you, {{ applicant.full_name.split(' ')[0] }}.</h1>
+ <p>Your application for <strong>{{ applicant.role.title }}</strong> has been received. We'll review it and get back to you at <strong>{{ applicant.email }}</strong>.</p>
+ <p class="muted">Reference: {{ applicant.public_id }}</p>
+ </div>
+-- 
+2.43.0
+
+
+From d12715dc6f50b7c196a1473546d807e832fc624c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 2 Sep 2026 11:52:31 +0000
+Subject: [PATCH 3/4] Automated status decisions, per-role technical tests with
+ auto-grading, two-way ClickUp sync
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Score policy (AUTO_STATUS_ENABLED, REJECT_BELOW=50, SELECT_ABOVE=60): <50 rejected,
+  50-60 filtered, >60 selected — or test_sent when the role defines a written test.
+  Only fires on status 'new'; never overrides human/ClickUp decisions.
+- Role form: test questions + private answer key. Qualifying candidates receive a unique
+  one-submission online test link by email (Gmail SMTP via MAIL_USERNAME/MAIL_PASSWORD;
+  falls back to posting the link on the ClickUp task when mail is unconfigured).
+- Candidate test page /test/<token>; on submit Claude grades against the answer key,
+  status -> test_returned, full result comment posted on ClickUp tagging the team.
+- ClickUp -> app webhook /webhooks/clickup (taskStatusUpdated, HMAC-verified) +
+  'flask clickup-webhook-setup' registration command; loop-safe echo handling.
+- Additive auto-migration adds new columns to existing tables on startup.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JcN7fd3GzJkJXg5WQpuUjU
+---
+ .env.example                              |  13 ++
+ README.md                                 |  31 ++++-
+ app/__init__.py                           |  47 ++++++++
+ app/admin.py                              |   2 +
+ app/api.py                                |   7 +-
+ app/clickup.py                            |  14 ++-
+ app/config.py                             |  17 +++
+ app/mailer.py                             |  65 ++++++++++
+ app/models.py                             |  18 ++-
+ app/pipeline.py                           | 139 ++++++++++++++++++++--
+ app/public.py                             |  26 ++++
+ app/summarize.py                          |  77 ++++++++++++
+ app/templates/admin/applicant_detail.html |  11 ++
+ app/templates/admin/role_form.html        |   5 +
+ app/templates/public/test.html            |  19 +++
+ app/templates/public/test_done.html       |   9 ++
+ app/webhooks.py                           |  73 ++++++++++++
+ 17 files changed, 556 insertions(+), 17 deletions(-)
+ create mode 100644 app/mailer.py
+ create mode 100644 app/templates/public/test.html
+ create mode 100644 app/templates/public/test_done.html
+ create mode 100644 app/webhooks.py
+
+diff --git a/.env.example b/.env.example
+index bc083ad..0371216 100644
+--- a/.env.example
++++ b/.env.example
+@@ -40,5 +40,18 @@ CLICKUP_TEAM_ID=9015802184
+ CLICKUP_ASSIGNEE=Mehdi Mahcene
+ CLICKUP_MENTIONS=Ahmidou, Taoufik Mousselmal, Abderrahmane Hammia
+ 
++# --- automatic status from CV score ---
++AUTO_STATUS_ENABLED=true
++REJECT_BELOW=50                     # score below 50 -> REJECTED
++SELECT_ABOVE=60                     # 50-60 -> FILTRED APPLICATION; above 60 -> SELECTED (or TEST SENT if the role has a test)
++
++# --- candidate email (test invitations) ---
++MAIL_USERNAME=hr@tweezgroup.com     # Gmail account that sends the tests
++MAIL_PASSWORD=                      # Gmail App Password (Google Account -> Security -> 2-Step -> App passwords)
++MAIL_FROM=
++
++# --- ClickUp -> app webhook (two-way sync); run `flask clickup-webhook-setup` once, then set: ---
++CLICKUP_WEBHOOK_SECRET=
++
+ # --- GDPR ---
+ RETENTION_MONTHS=12
+diff --git a/README.md b/README.md
+index d779ff6..93afa37 100644
+--- a/README.md
++++ b/README.md
+@@ -53,13 +53,40 @@ Statuses mirror the ClickUp recruiting lists exactly, plus an internal `new` for
+ 
+ Codes are stored on each role (editable in `/admin`); unknown titles get their initials. The date is the application date in Paris time, `DDMMYYYY`. `flask --app wsgi seed-roles` creates all 16 roles (closed) with codes and their Drive folders pinned — open the ones you're hiring for.
+ 
++### Automatic status decisions (score policy)
++
++| CV score | Status | ClickUp |
++|---|---|---|
++| below 50 | rejected | REJECTED |
++| 50 – 60 | filtered | FILTRED APPLICATION |
++| above 60, role has no test | selected | SELECTED/ IN PROGRESS |
++| above 60, role has a test | test_sent (test emailed) | TEST SENT |
++| candidate submits the test | test_returned (auto-graded) | TEST RETURNED + result comment |
++
++Thresholds are `REJECT_BELOW` / `SELECT_ABOVE` env vars; `AUTO_STATUS_ENABLED=false` turns the policy off. The policy only ever fires on applicants still in `new` — it never overrides a decision already taken by a person, the API, or ClickUp.
++
++### Written technical test per role
++
++In */admin → role form*: paste the **test questions** (exactly as candidates will see them) and the private **answer key**. Leave the questions empty and the role simply has no test. When an applicant scores above the threshold, they receive an email (Gmail SMTP — set `MAIL_USERNAME` + `MAIL_PASSWORD` App Password) with a unique one-submission link `/test/<token>`; they answer online; Claude grades the answers against the key; the status moves to TEST RETURNED and the full result (score, per-question breakdown, strengths/weaknesses/flags) is posted as a comment on the ClickUp task, tagging the team. If email isn't configured, the applicant stays in SELECTED and the test link is posted on the ClickUp task for manual sending.
++
++### Two-way ClickUp sync
++
++App → ClickUp was already automatic. For ClickUp → app, run once in the server shell:
++
++```bash
++flask --app wsgi clickup-webhook-setup     # registers the webhook, prints CLICKUP_WEBHOOK_SECRET
++```
++
++add the printed `CLICKUP_WEBHOOK_SECRET` to the environment and redeploy. From then on, dragging a task to another column on the board updates the applicant here within seconds (signature-verified; echoes of the app's own pushes are ignored, so no loops).
++
+ ### Automation, step by step
+ 
+ Right after the candidate sees the confirmation page (background thread, ~5–15 s):
+ 
+ 1. Claude summarises the CV → `score`, `ai_summary` on the record.
+-2. ClickUp task created in the role's list, assignee Mehdi Mahcene, description with contact details, declared experience, Drive link to the CV, link to the admin record.
+-3. Comment posted on the task with the summary, ending with `cc @Ahmidou, @Taoufik Mousselmal, @Abderrahmane Hammia` (real mentions; falls back to plain text if the API rejects the rich format).
++2. The score policy decides the status (see table above); if a test is due, it is emailed.
++3. ClickUp task created in the role's list with that status, assignee Mehdi Mahcene, description with contact details, declared experience, Drive link to the CV, link to the admin record.
++4. Comment posted on the task with the summary, ending with `cc @Ahmidou, @Taoufik Mousselmal, @Abderrahmane Hammia` (real mentions; falls back to plain text if the API rejects the rich format).
+ 
+ Each step is idempotent. `flask --app wsgi process-pending` (or `POST /api/v1/applicants/<id>/process`, or the "Re-run" button in the admin) retries whatever is missing.
+ 
+diff --git a/app/__init__.py b/app/__init__.py
+index 591bfd8..891105e 100644
+--- a/app/__init__.py
++++ b/app/__init__.py
+@@ -20,10 +20,12 @@ def create_app(config_object=Config):
+     from .public import bp as public_bp
+     from .admin import bp as admin_bp
+     from .api import bp as api_bp
++    from .webhooks import bp as webhooks_bp
+ 
+     app.register_blueprint(public_bp)
+     app.register_blueprint(admin_bp, url_prefix="/admin")
+     app.register_blueprint(api_bp, url_prefix="/api/v1")
++    app.register_blueprint(webhooks_bp, url_prefix="/webhooks")
+ 
+     @app.context_processor
+     def inject_globals():
+@@ -55,11 +57,31 @@ def create_app(config_object=Config):
+ 
+     with app.app_context():
+         db.create_all()
++        _auto_migrate()
+ 
+     register_cli(app)
+     return app
+ 
+ 
++def _auto_migrate():
++    """Additive migrations: add any model column missing from an existing table (SQLite/Postgres/MySQL).
++    Safe to run on every startup; never drops or alters existing columns."""
++    from sqlalchemy import inspect, text
++
++    insp = inspect(db.engine)
++    with db.engine.begin() as conn:
++        for table in db.metadata.sorted_tables:
++            if not insp.has_table(table.name):
++                continue
++            existing = {c["name"] for c in insp.get_columns(table.name)}
++            for col in table.columns:
++                if col.name in existing:
++                    continue
++                ctype = col.type.compile(db.engine.dialect)
++                conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ctype}'))
++                logging.getLogger(__name__).info("auto-migrate: added %s.%s %s", table.name, col.name, ctype)
++
++
+ def register_cli(app):
+     @app.cli.command("seed")
+     def seed():
+@@ -130,6 +152,31 @@ def register_cli(app):
+         for r in Role.query.order_by(Role.title):
+             click.echo(f"  {r.code:5s} {r.title:35s} /apply/{r.slug}  folder={r.drive_folder_id or 'auto'}")
+ 
++    @app.cli.command("clickup-webhook-setup")
++    def clickup_webhook_setup():
++        """Register the ClickUp -> app webhook (two-way status sync). Run once after deployment;
++        copy the printed secret into the CLICKUP_WEBHOOK_SECRET environment variable."""
++        import requests as rq
++        cfg = app.config
++        endpoint = f"{cfg['PUBLIC_BASE_URL']}/webhooks/clickup"
++        api = __import__("os").environ.get("CLICKUP_API_BASE", "https://api.clickup.com/api/v2")
++        headers = {"Authorization": cfg["CLICKUP_API_TOKEN"], "Content-Type": "application/json"}
++        r = rq.get(f"{api}/team/{cfg['CLICKUP_TEAM_ID']}/webhook", headers=headers, timeout=15)
++        r.raise_for_status()
++        for wh in r.json().get("webhooks", []):
++            if wh.get("endpoint") == endpoint:
++                click.echo(f"Webhook already registered: {wh['id']} -> {endpoint}")
++                click.echo(f"CLICKUP_WEBHOOK_SECRET={wh.get('secret', '(not returned — delete and re-run to get a new one)')}")
++                return
++        r = rq.post(f"{api}/team/{cfg['CLICKUP_TEAM_ID']}/webhook",
++                    json={"endpoint": endpoint, "events": ["taskStatusUpdated"]}, headers=headers, timeout=15)
++        r.raise_for_status()
++        data = r.json()
++        wh = data.get("webhook", data)
++        click.echo(f"Webhook registered: id={data.get('id') or wh.get('id')} -> {endpoint}")
++        click.echo("Add this to the environment and redeploy:")
++        click.echo(f"CLICKUP_WEBHOOK_SECRET={wh.get('secret', '')}")
++
+     @app.cli.command("sync-codes")
+     def sync_codes():
+         """Update every role's code to the agreed list (DS, VC, PROS, ...) based on its title.
+diff --git a/app/admin.py b/app/admin.py
+index 7c7e100..41269dc 100644
+--- a/app/admin.py
++++ b/app/admin.py
+@@ -90,6 +90,8 @@ def _save_role(role):
+     role.employment_type = f.get("employment_type", "").strip() or None
+     role.description = f.get("description", "").strip() or None
+     role.requirements = f.get("requirements", "").strip() or None
++    role.test_questions = f.get("test_questions", "").strip() or None
++    role.test_answer_key = f.get("test_answer_key", "").strip() or None
+     role.clickup_list_id = f.get("clickup_list_id", "").strip() or None
+     role.drive_folder_id = f.get("drive_folder_id", "").strip() or None
+     role.is_open = f.get("is_open") == "on"
+diff --git a/app/api.py b/app/api.py
+index 80e99e6..e9f1da2 100644
+--- a/app/api.py
++++ b/app/api.py
+@@ -78,7 +78,7 @@ def role_patch(slug):
+     r = Role.query.filter_by(slug=slug).first_or_404()
+     body = request.get_json(silent=True) or {}
+     for field in ("title", "code", "department", "location", "employment_type", "description",
+-                  "requirements", "clickup_list_id", "drive_folder_id"):
++                  "requirements", "test_questions", "test_answer_key", "clickup_list_id", "drive_folder_id"):
+         if field in body:
+             setattr(r, field, body[field])
+     if "is_open" in body:
+@@ -180,10 +180,13 @@ def applicant_patch(public_id):
+ @bp.post("/applicants/<public_id>/process")
+ @require_key
+ def applicant_process(public_id):
+-    """Re-run the auto-summary and ClickUp task/comment for one applicant."""
++    """Re-run the automation for one applicant (summary/status/task/comment, and test grading if submitted)."""
+     from . import pipeline
+     a = _applicant(public_id)
+     done = pipeline.process_application(a.id, background=False)
++    a = _applicant(public_id)
++    if a.test_submitted_at and a.test_evaluation is None:
++        done += pipeline.process_test_submission(a.id, background=False)
+     return jsonify(ok=True, steps=done, applicant=_applicant(public_id).to_dict())
+ 
+ 
+diff --git a/app/clickup.py b/app/clickup.py
+index d14ace9..c07dba5 100644
+--- a/app/clickup.py
++++ b/app/clickup.py
+@@ -183,7 +183,15 @@ update_task_status = sync_status  # backwards-compatible alias
+ 
+ # -------------------------------------------------------------------------------------- comments
+ 
+-def post_comment(applicant, text, mentions=True):
++REVERSE_STATUS_MAP = {v.lower(): k for k, v in STATUS_MAP.items()}
++
++
++def status_from_clickup(name):
++    """ClickUp status name -> our slug (case-insensitive), or None if unknown."""
++    return REVERSE_STATUS_MAP.get((name or "").strip().lower())
++
++
++def post_comment(applicant, text, mentions=True, label="Summary comment"):
+     """Post a comment on the applicant's task. With mentions=True the configured people are @-tagged.
+ 
+     ClickUp's rich comment format (`comment` array with type=tag items) renders real mentions; if the
+@@ -202,13 +210,13 @@ def post_comment(applicant, text, mentions=True):
+             r = requests.post(url, json={"comment": parts, "notify_all": True}, headers=_headers(), timeout=15)
+             if r.status_code < 400:
+                 log_event(applicant, "clickup_synced",
+-                          "Summary comment posted, tagged " + ", ".join(n for n, _ in tagged))
++                          f"{label} posted, tagged " + ", ".join(n for n, _ in tagged))
+                 return r.json()
+             log.warning("ClickUp rich comment rejected (%s): %s — falling back to plain text", r.status_code, r.text[:200])
+         plain = text + ("\n\ncc " + ", ".join(f"@{n}" for n, _ in tagged) if tagged else "")
+         r = requests.post(url, json={"comment_text": plain, "notify_all": True}, headers=_headers(), timeout=15)
+         r.raise_for_status()
+-        log_event(applicant, "clickup_synced", "Summary comment posted (plain text)")
++        log_event(applicant, "clickup_synced", f"{label} posted (plain text)")
+         return r.json()
+     except Exception as exc:
+         log.warning("ClickUp comment failed: %s", exc)
+diff --git a/app/config.py b/app/config.py
+index 5de705f..6d232f2 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -96,5 +96,22 @@ class Config:
+     SUMMARY_ENABLED = _bool("SUMMARY_ENABLED", bool(os.environ.get("ANTHROPIC_API_KEY")))
+     PROCESS_ASYNC = _bool("PROCESS_ASYNC", True)  # run summary + ClickUp in a background thread after apply
+ 
++    # --- automatic status decisions from the CV score ---
++    AUTO_STATUS_ENABLED = _bool("AUTO_STATUS_ENABLED", True)
++    REJECT_BELOW = int(os.environ.get("REJECT_BELOW", "50"))   # score <  50            -> rejected
++    SELECT_ABOVE = int(os.environ.get("SELECT_ABOVE", "60"))   # 50 <= score <= 60      -> filtered
++                                                               # score >  60            -> selected (or test_sent if the role has a test)
++
++    # --- candidate email (test invitations) ---
++    MAIL_BACKEND = os.environ.get("MAIL_BACKEND", "smtp" if os.environ.get("MAIL_USERNAME") else "off")  # smtp | log | off
++    MAIL_SERVER = os.environ.get("MAIL_SERVER", "smtp.gmail.com")
++    MAIL_PORT = int(os.environ.get("MAIL_PORT", "587"))
++    MAIL_USERNAME = _env("MAIL_USERNAME")            # e.g. hr@tweezgroup.com
++    MAIL_PASSWORD = _env("MAIL_PASSWORD")            # Gmail App Password (Google Account -> Security -> App passwords)
++    MAIL_FROM = _env("MAIL_FROM")                    # defaults to MAIL_USERNAME
++
++    # --- ClickUp -> app webhook (two-way sync) ---
++    CLICKUP_WEBHOOK_SECRET = _env("CLICKUP_WEBHOOK_SECRET")  # printed by `flask clickup-webhook-setup`
++
+     # --- GDPR ---
+     RETENTION_MONTHS = int(os.environ.get("RETENTION_MONTHS", "12"))
+diff --git a/app/mailer.py b/app/mailer.py
+new file mode 100644
+index 0000000..4fbe1a6
+--- /dev/null
++++ b/app/mailer.py
+@@ -0,0 +1,65 @@
++"""Candidate email sending.
++
++MAIL_BACKEND=smtp  — Gmail (or any SMTP): MAIL_USERNAME + MAIL_PASSWORD (Gmail App Password), MAIL_FROM.
++MAIL_BACKEND=log   — no real sending; the message is logged (development / not yet configured).
++
++send() returns True only when the message actually left; callers use that to decide whether a
++candidate can be considered notified.
++"""
++import logging
++import smtplib
++from email.message import EmailMessage
++
++from flask import current_app
++
++log = logging.getLogger(__name__)
++
++
++def configured():
++    cfg = current_app.config
++    return cfg["MAIL_BACKEND"] == "smtp" and cfg["MAIL_USERNAME"] and cfg["MAIL_PASSWORD"]
++
++
++def send(to, subject, body):
++    cfg = current_app.config
++    if cfg["MAIL_BACKEND"] == "log":  # development: treat as sent, keep a record in the logs
++        log.info("MAIL (log backend) to=%s subject=%r\n%s", to, subject, body)
++        current_app.extensions.setdefault("_sent_mail", []).append({"to": to, "subject": subject, "body": body})
++        return True
++    if not configured():
++        log.warning("Mail not configured (set MAIL_USERNAME/MAIL_PASSWORD); could not email %s", to)
++        return False
++    msg = EmailMessage()
++    msg["From"] = cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"]
++    msg["To"] = to
++    msg["Subject"] = subject
++    msg.set_content(body)
++    try:
++        with smtplib.SMTP(cfg["MAIL_SERVER"], cfg["MAIL_PORT"], timeout=20) as s:
++            s.starttls()
++            s.login(cfg["MAIL_USERNAME"], cfg["MAIL_PASSWORD"])
++            s.send_message(msg)
++        return True
++    except Exception as exc:
++        log.warning("Mail send failed to %s: %s", to, exc)
++        return False
++
++
++def test_invitation(applicant, test_url):
++    company = current_app.config["COMPANY_NAME"]
++    first = applicant.full_name.split(" ")[0]
++    subject = f"{company} — technical test for the {applicant.role.title} position"
++    body = f"""Hello {first},
++
++Thank you for applying for the {applicant.role.title} position at {company}. We were impressed by your profile, and the next step is a short written technical test.
++
++Complete it online here (one submission only, at your convenience):
++
++{test_url}
++
++There is no strict time limit; take the time to give thoughtful answers, in English or French as you prefer.
++
++Good luck!
++The {company} recruitment team
++"""
++    return subject, body
+diff --git a/app/models.py b/app/models.py
+index 00a615d..66a43c5 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -65,6 +65,8 @@ class Role(db.Model):
+     is_open = db.Column(db.Boolean, default=True, nullable=False)
+     clickup_list_id = db.Column(db.String(60))  # overrides the default pipeline list
+     drive_folder_id = db.Column(db.String(120))  # Google Drive subfolder for this role's CVs (auto-created if empty)
++    test_questions = db.Column(db.Text)          # written technical test sent to candidates scoring > SELECT_ABOVE
++    test_answer_key = db.Column(db.Text)         # private answer key Claude grades against (never shown to candidates)
+     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+ 
+@@ -84,6 +86,8 @@ class Role(db.Model):
+             "is_open": self.is_open,
+             "clickup_list_id": self.clickup_list_id,
+             "drive_folder_id": self.drive_folder_id,
++            "has_test": bool(self.test_questions and self.test_questions.strip()),
++            "test_questions": self.test_questions,
+             "created_at": self.created_at.isoformat() + "Z",
+             "updated_at": self.updated_at.isoformat() + "Z",
+         }
+@@ -119,9 +123,16 @@ class Applicant(db.Model):
+     score = db.Column(db.Integer)            # 0-100, set by the agent
+     ai_summary = db.Column(db.Text)          # agent's screening summary
+     notes = db.Column(db.Text)               # recruiter notes
+-    clickup_task_id = db.Column(db.String(60))
++    clickup_task_id = db.Column(db.String(60), index=True)
+     clickup_task_url = db.Column(db.String(300))
+ 
++    test_token = db.Column(db.String(48), unique=True)   # secret link for the candidate's online test
++    test_sent_at = db.Column(db.DateTime)
++    test_submitted_at = db.Column(db.DateTime)
++    test_answers = db.Column(db.Text)
++    test_score = db.Column(db.Integer)                   # 0-100, graded by Claude against the answer key
++    test_evaluation = db.Column(db.Text)                 # per-question feedback
++
+     consent_at = db.Column(db.DateTime)
+     retention_until = db.Column(db.DateTime, index=True)
+     created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+@@ -159,6 +170,11 @@ class Applicant(db.Model):
+             "notes": self.notes,
+             "clickup_task_id": self.clickup_task_id,
+             "clickup_task_url": self.clickup_task_url,
++            "test": {
++                "sent_at": self.test_sent_at.isoformat() + "Z" if self.test_sent_at else None,
++                "submitted_at": self.test_submitted_at.isoformat() + "Z" if self.test_submitted_at else None,
++                "score": self.test_score,
++            } if self.test_sent_at else None,
+             "consent_at": self.consent_at.isoformat() + "Z" if self.consent_at else None,
+             "retention_until": self.retention_until.isoformat() + "Z" if self.retention_until else None,
+             "created_at": self.created_at.isoformat() + "Z",
+diff --git a/app/pipeline.py b/app/pipeline.py
+index c29b187..c1e2de8 100644
+--- a/app/pipeline.py
++++ b/app/pipeline.py
+@@ -1,20 +1,30 @@
+ """Post-application automation, in order:
+ 
+   1. Claude reads the CV and writes a score + summary (if ANTHROPIC_API_KEY is set)
+-  2. ClickUp task is created in the role's list, assigned to Mehdi Mahcene
+-  3. The summary is posted as a comment on the task, tagging Ahmidou, Taoufik Mousselmal, Abderrahmane Hammia
++  2. The score decides the status automatically (AUTO_STATUS_ENABLED):
++       score <  REJECT_BELOW (50)          -> rejected
++       REJECT_BELOW <= score <= SELECT_ABOVE (60) -> filtered   (FILTRED APPLICATION)
++       score >  SELECT_ABOVE               -> selected  (SELECTED/ IN PROGRESS)
++         ... and if the role has a written test: the test is emailed to the candidate
++             (unique online link) and the status becomes test_sent (TEST SENT) instead.
++  3. ClickUp task is created in the role's list, assigned to Mehdi Mahcene, with that status
++  4. The summary is posted as a comment tagging Ahmidou, Taoufik Mousselmal, Abderrahmane Hammia
++
++When the candidate submits the test online, Claude grades it against the role's answer key,
++the status moves to test_returned (TEST RETURNED) and the results are posted on the ClickUp task.
+ 
+ Runs in a background thread right after the candidate submits (PROCESS_ASYNC=true), or inline.
+ Idempotent: re-running only does the steps that are still missing. `flask process-pending` retries
+ anything that failed (e.g. ClickUp was down).
+ """
+ import logging
++import secrets
+ import threading
+ 
+ from flask import current_app
+ 
+-from . import clickup, summarize
+-from .models import Applicant, Event, db, log_event
++from . import clickup, mailer, summarize
++from .models import Applicant, Event, db, log_event, utcnow
+ 
+ log = logging.getLogger(__name__)
+ 
+@@ -27,15 +37,48 @@ def process_application(applicant_id, background=True):
+     return _run(app, applicant_id)
+ 
+ 
++def decide_status(applicant, cfg):
++    """The agreed score policy. Returns the target status slug, or None to leave as is."""
++    if not cfg["AUTO_STATUS_ENABLED"] or applicant.score is None:
++        return None
++    if applicant.status not in ("new",):  # never override a decision already taken (human or webhook)
++        return None
++    if applicant.score < cfg["REJECT_BELOW"]:
++        return "rejected"
++    if applicant.score <= cfg["SELECT_ABOVE"]:
++        return "filtered"
++    role = applicant.role
++    if role.test_questions and role.test_questions.strip():
++        return "test_sent"
++    return "selected"
++
++
++def send_test(a):
++    """Email the candidate their unique online test link. Returns True when the mail actually left."""
++    if not a.test_token:
++        a.test_token = secrets.token_urlsafe(24)
++    test_url = f"{current_app.config['PUBLIC_BASE_URL']}/test/{a.test_token}"
++    subject, body = mailer.test_invitation(a, test_url)
++    sent = mailer.send(a.email, subject, body)
++    if sent:
++        a.test_sent_at = utcnow()
++        log_event(a, "email_sent", f"Technical test sent to {a.email}", actor="system")
++    else:
++        log_event(a, "error", f"Test email could not be sent automatically — send this link manually: {test_url}",
++                  actor="system")
++    return sent, test_url
++
++
+ def _run(app, applicant_id):
+     with app.app_context():
+         a = db.session.get(Applicant, applicant_id)
+         if not a or a.deleted_at:
+             return []
++        cfg = app.config
+         done = []
+         try:
+             # 1. summary
+-            if a.ai_summary is None and app.config["SUMMARY_ENABLED"]:
++            if a.ai_summary is None and cfg["SUMMARY_ENABLED"]:
+                 try:
+                     data = summarize.summarize(a)
+                     if data:
+@@ -48,17 +91,45 @@ def _run(app, applicant_id):
+                     log_event(a, "error", f"Auto-summary failed: {exc}", actor="claude")
+                 db.session.commit()
+ 
+-            # 2. task
++            # 2. automatic status from the score (+ test dispatch)
++            target = decide_status(a, cfg)
++            if target and target != a.status:
++                test_note = ""
++                if target == "test_sent":
++                    sent, test_url = send_test(a)
++                    if not sent:
++                        target = "selected"  # candidate not notified -> don't claim the test was sent
++                        test_note = f" (test link for manual sending: {test_url})"
++                old = a.status
++                a.status = target
++                log_event(a, "status_changed",
++                          f"{old} -> {target} (auto: score {a.score}, thresholds <{cfg['REJECT_BELOW']} reject, "
++                          f">{cfg['SELECT_ABOVE']} select){test_note}", actor="claude")
++                done.append(f"auto_status:{target}")
++                db.session.commit()
++
++            # 3. ClickUp task (created with the decided status)
+             if not a.clickup_task_id:
+                 if clickup.create_task(a):
+                     done.append("clickup_task")
+                 db.session.commit()
++            elif f"auto_status:{a.status}" in done:
++                clickup.sync_status(a)
++                db.session.commit()
+ 
+-            # 3. comment with summary + mentions (once)
++            # 4. summary comment with mentions (once)
+             if a.clickup_task_id and a.ai_summary and not _has_event(a, "clickup_synced", "Summary comment"):
+                 if clickup.post_comment(a, a.ai_summary, mentions=True):
+                     done.append("clickup_comment")
+                 db.session.commit()
++
++            # 5. manual-send note on the task if the test email failed
++            if a.clickup_task_id and a.status == "selected" and a.role.test_questions and not a.test_sent_at \
++                    and not _has_event(a, "clickup_synced", "Test link posted"):
++                url = f"{cfg['PUBLIC_BASE_URL']}/test/{a.test_token}" if a.test_token else None
++                if url and clickup.post_comment(a, f"Email is not configured — please send the candidate their test "
++                                                   f"link manually:\n{url}", mentions=False, label="Test link"):
++                    db.session.commit()
+         except Exception as exc:
+             log.exception("process_application failed: %s", exc)
+             db.session.rollback()
+@@ -67,13 +138,63 @@ def _run(app, applicant_id):
+         return done
+ 
+ 
++def process_test_submission(applicant_id, background=True):
++    """After the candidate submits: grade with Claude, move to test_returned, post results on ClickUp."""
++    app = current_app._get_current_object()
++    if background:
++        threading.Thread(target=_run_test, args=(app, applicant_id), daemon=True).start()
++        return ["queued"]
++    return _run_test(app, applicant_id)
++
++
++def _run_test(app, applicant_id):
++    with app.app_context():
++        a = db.session.get(Applicant, applicant_id)
++        if not a or a.deleted_at or not a.test_submitted_at:
++            return []
++        done = []
++        try:
++            if a.test_evaluation is None:
++                try:
++                    data = summarize.evaluate_test(a)
++                    if data:
++                        a.test_score = data["score"]
++                        a.test_evaluation = summarize.format_test_result(a, data)
++                        log_event(a, "scored", f"Test graded: {a.test_score}/100 ({data.get('verdict')})", actor="claude")
++                        done.append("test_graded")
++                except Exception as exc:
++                    log.warning("Test evaluation failed for %s: %s", a.public_id, exc)
++                    log_event(a, "error", f"Test evaluation failed: {exc}", actor="claude")
++                db.session.commit()
++
++            if a.status in ("test_sent", "selected"):
++                old = a.status
++                a.status = "test_returned"
++                log_event(a, "status_changed", f"{old} -> test_returned (test submitted)", actor="system")
++                clickup.sync_status(a)
++                done.append("test_returned")
++                db.session.commit()
++
++            if a.clickup_task_id and a.test_evaluation and not _has_event(a, "clickup_synced", "Test result"):
++                if clickup.post_comment(a, a.test_evaluation, mentions=True, label="Test result"):
++                    done.append("clickup_test_comment")
++                db.session.commit()
++        except Exception as exc:
++            log.exception("process_test_submission failed: %s", exc)
++            db.session.rollback()
++        finally:
++            db.session.remove()
++        return done
++
++
+ def _has_event(a, kind, message_prefix):
+     return Event.query.filter(Event.applicant_id == a.id, Event.kind == kind,
+                               Event.message.like(f"{message_prefix}%")).count() > 0
+ 
+ 
+ def pending_query():
+-    """Applicants still missing a summary, a task, or the summary comment."""
++    """Applicants still missing a summary, a task, or a grade for a submitted test."""
+     return Applicant.query.filter(Applicant.deleted_at.is_(None)).filter(
+-        db.or_(Applicant.clickup_task_id.is_(None), Applicant.ai_summary.is_(None))
++        db.or_(Applicant.clickup_task_id.is_(None), Applicant.ai_summary.is_(None),
++               db.and_(Applicant.test_submitted_at.isnot(None), Applicant.test_evaluation.is_(None)))
+     ).order_by(Applicant.created_at.asc())
+diff --git a/app/public.py b/app/public.py
+index 3f37d37..c07e01b 100644
+--- a/app/public.py
++++ b/app/public.py
+@@ -130,6 +130,32 @@ def thanks(public_id):
+     return render_template("public/thanks.html", applicant=applicant)
+ 
+ 
++@bp.route("/test/<token>", methods=["GET", "POST"])
++def test(token):
++    """The candidate's online technical test (unique secret link from the invitation email)."""
++    applicant = Applicant.query.filter_by(test_token=token).filter(Applicant.deleted_at.is_(None)).first_or_404()
++    role = applicant.role
++    if not (role.test_questions and role.test_questions.strip()):
++        return render_template("public/closed.html", role=role), 410
++    if applicant.test_submitted_at:
++        return render_template("public/test_done.html", applicant=applicant, already=True)
++
++    if request.method == "POST":
++        answers = (request.form.get("answers") or "").strip()
++        if len(answers) < 30:
++            flash("Please write your answers before submitting (a few sentences at least).", "error")
++            return render_template("public/test.html", applicant=applicant, role=role,
++                                   answers=answers), 400
++        applicant.test_answers = answers
++        applicant.test_submitted_at = utcnow()
++        log_event(applicant, "note", "Test answers submitted by the candidate", actor="system")
++        db.session.commit()
++        pipeline.process_test_submission(applicant.id, background=current_app.config["PROCESS_ASYNC"])
++        return render_template("public/test_done.html", applicant=applicant, already=False)
++
++    return render_template("public/test.html", applicant=applicant, role=role, answers="")
++
++
+ @bp.get("/privacy")
+ def privacy():
+     return render_template("public/privacy.html",
+diff --git a/app/summarize.py b/app/summarize.py
+index bd3835c..e1d46f6 100644
+--- a/app/summarize.py
++++ b/app/summarize.py
+@@ -91,3 +91,80 @@ def format_for_task(applicant, data):
+     lines += ["", f"Declared experience: {applicant.years_experience} years"
+               if applicant.years_experience is not None else ""]
+     return "\n".join(l for l in lines if l is not None).strip()
++
++
++EVAL_PROMPT = """You are grading a candidate's written technical test for {company}.
++
++ROLE: {title}
++
++TEST QUESTIONS (as sent to the candidate):
++\"\"\"
++{questions}
++\"\"\"
++
++ANSWER KEY (private — what a strong answer contains; award partial credit for partially correct answers):
++\"\"\"
++{answer_key}
++\"\"\"
++
++CANDIDATE'S ANSWERS:
++\"\"\"
++{answers}
++\"\"\"
++
++Grade strictly against the answer key. Judge substance, not formatting or language (English/French both fine).
++Return ONLY a JSON object with:
++- "score": integer 0-100 overall
++- "verdict": one of "excellent", "good", "borderline", "insufficient"
++- "per_question": single string, one line per question, format "- Qn: x/y — one-line justification"
++- "strengths": list of strings
++- "weaknesses": list of strings
++- "flags": list (e.g. likely copy-paste/AI answer with no specifics, contradiction with CV), or []
++"""
++
++
++def evaluate_test(applicant):
++    """Grade the candidate's submitted test against the role's private answer key."""
++    cfg = current_app.config
++    if not cfg["ANTHROPIC_API_KEY"]:
++        return None
++    role = applicant.role
++    prompt = EVAL_PROMPT.format(
++        company=cfg["COMPANY_NAME"], title=role.title,
++        questions=(role.test_questions or "")[:20_000],
++        answer_key=(role.test_answer_key or "(no key provided — grade on correctness and depth)")[:20_000],
++        answers=(applicant.test_answers or "")[:40_000],
++    )
++    r = requests.post(
++        f"{cfg['ANTHROPIC_API_BASE']}/v1/messages",
++        headers={"x-api-key": cfg["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01",
++                 "content-type": "application/json"},
++        json={"model": cfg["SUMMARY_MODEL"], "max_tokens": 4096,
++              "messages": [{"role": "user", "content": prompt}]},
++        timeout=90,
++    )
++    if r.status_code >= 400:
++        raise RuntimeError(f"Anthropic {r.status_code}: {r.text[:500]}")
++    text = "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") != "thinking")
++    m = re.search(r"\{.*\}", text, re.S)
++    data = json.loads(m.group(0) if m else text)
++    data["score"] = max(0, min(100, int(data.get("score", 0))))
++    return data
++
++
++def format_test_result(applicant, data):
++    lines = [
++        f"Test result — {applicant.full_name} · {applicant.role.title}",
++        f"Test score {data['score']}/100 · {data.get('verdict', '-')}",
++        "",
++        data.get("per_question", "").strip(),
++    ]
++    if data.get("strengths"):
++        lines += ["", "Strengths: " + "; ".join(data["strengths"])]
++    if data.get("weaknesses"):
++        lines += ["Weaknesses: " + "; ".join(data["weaknesses"])]
++    if data.get("flags"):
++        lines += ["Flags: " + "; ".join(data["flags"])]
++    if applicant.score is not None:
++        lines += ["", f"(CV screening score was {applicant.score}/100)"]
++    return "\n".join(l for l in lines if l is not None).strip()
+diff --git a/app/templates/admin/applicant_detail.html b/app/templates/admin/applicant_detail.html
+index e30ba75..ff85061 100644
+--- a/app/templates/admin/applicant_detail.html
++++ b/app/templates/admin/applicant_detail.html
+@@ -34,6 +34,17 @@
+     <form method="post"><input type="hidden" name="action" value="notes">
+       <label>Recruiter notes</label><textarea name="notes">{{ a.notes or '' }}</textarea>
+       <p><button class="btn small secondary" type="submit">Save notes</button></p></form>
++    {% if a.test_sent_at or a.test_submitted_at %}
++    <h2>Technical test</h2>
++    <dl class="kv">
++      <dt>Sent</dt><dd>{{ a.test_sent_at.strftime('%d %b %Y %H:%M') if a.test_sent_at else '–' }}</dd>
++      <dt>Submitted</dt><dd>{{ a.test_submitted_at.strftime('%d %b %Y %H:%M') if a.test_submitted_at else 'not yet' }}</dd>
++      <dt>Test score</dt><dd><span class="score">{{ a.test_score if a.test_score is not none else '–' }}</span>{% if a.test_score is not none %}<span class="muted">/100</span>{% endif %}</dd>
++      {% if a.test_token %}<dt>Test link</dt><dd><code style="font-size:12px">{{ config.PUBLIC_BASE_URL }}/test/{{ a.test_token }}</code></dd>{% endif %}
++    </dl>
++    {% if a.test_evaluation %}<p style="white-space:pre-wrap;font-size:14px">{{ a.test_evaluation }}</p>{% endif %}
++    {% if a.test_answers %}<details><summary class="muted">Candidate's answers</summary><pre class="cv">{{ a.test_answers }}</pre></details>{% endif %}
++    {% endif %}
+     <h2>Activity</h2>
+     <ul class="events">{% for e in a.events.limit(30) %}<li><span class="muted">{{ e.created_at.strftime('%d %b %H:%M') }}</span> · <strong>{{ e.kind }}</strong> ({{ e.actor }}){% if e.message %} — {{ e.message }}{% endif %}</li>{% endfor %}</ul>
+   </div>
+diff --git a/app/templates/admin/role_form.html b/app/templates/admin/role_form.html
+index 9a6b214..99df7de 100644
+--- a/app/templates/admin/role_form.html
++++ b/app/templates/admin/role_form.html
+@@ -19,6 +19,11 @@
+   <textarea name="requirements" style="min-height:220px">{{ role.requirements or '' if role else '' }}</textarea>
+   <div class="hint">Not shown to candidates. Write what "good" looks like: must-haves, nice-to-haves, red flags, how to score. The agent screens every CV against this text — update it whenever the bar changes.</div>
+   <label>Google Drive folder ID for this role's CVs</label><input type="text" name="drive_folder_id" value="{{ role.drive_folder_id or '' if role else '' }}" placeholder="auto: best-matching existing subfolder of TWEEZ-CV-BANK, else a new '<title> CVs' folder">
++  <label>Written technical test (optional)</label>
++  <textarea name="test_questions" style="min-height:180px" placeholder="The questions exactly as the candidate will see them. Leave empty if this role has no test — the process simply continues.">{{ role.test_questions or '' if role else '' }}</textarea>
++  <div class="hint">If filled: every applicant scoring above the selection threshold automatically receives this test by email (unique online link) and moves to TEST SENT. When they submit, Claude grades the answers against your key, the status moves to TEST RETURNED and the results are posted on the ClickUp task.</div>
++  <label>Answer key (private — used by Claude to grade)</label>
++  <textarea name="test_answer_key" style="min-height:140px" placeholder="Expected answers / grading guide, e.g. 'Q1 (30 pts): must mention X and Y…'. Never shown to candidates.">{{ role.test_answer_key or '' if role else '' }}</textarea>
+   <label>ClickUp list ID (optional override)</label><input type="text" name="clickup_list_id" value="{{ role.clickup_list_id or '' if role else '' }}" placeholder="defaults to CLICKUP_LIST_ID">
+   <label class="check"><input type="checkbox" name="is_open" {% if not role or role.is_open %}checked{% endif %}> Active — visible to candidates and accepting applications</label>
+   <p style="margin-top:20px"><button class="btn" type="submit">Save role</button></p>
+diff --git a/app/templates/public/test.html b/app/templates/public/test.html
+new file mode 100644
+index 0000000..fce85fe
+--- /dev/null
++++ b/app/templates/public/test.html
+@@ -0,0 +1,19 @@
++{% extends "base.html" %}
++{% block title %}Technical test — {{ role.title }} — {{ company }}{% endblock %}
++{% block mainclass %}narrow{% endblock %}
++{% block content %}
++<p class="muted" style="letter-spacing:.22em;text-transform:uppercase;font-size:12px;margin:14px 0 6px">Technical test</p>
++<h1>{{ role.title }}</h1>
++<p class="muted">For {{ applicant.full_name }} · one submission only — you can prepare your answers elsewhere and paste them here.</p>
++<div class="card">
++  <h2 style="margin-top:0">Questions</h2>
++  <div style="white-space:pre-wrap">{{ role.test_questions }}</div>
++</div>
++<div class="card">
++<form method="post">
++  <label for="answers">Your answers *</label>
++  <textarea id="answers" name="answers" style="min-height:320px" placeholder="Answer each question, numbered like the questions above.">{{ answers }}</textarea>
++  <p style="margin-top:20px"><button class="btn" type="submit" onclick="return confirm('Submit your answers? You can only submit once.')">Submit my answers</button></p>
++</form>
++</div>
++{% endblock %}
+diff --git a/app/templates/public/test_done.html b/app/templates/public/test_done.html
+new file mode 100644
+index 0000000..424f925
+--- /dev/null
++++ b/app/templates/public/test_done.html
+@@ -0,0 +1,9 @@
++{% extends "base.html" %}
++{% block mainclass %}narrow{% endblock %}
++{% block content %}
++<div class="card" style="text-align:center;padding:40px 30px">
++<div style="font:600 44px/1 'Cormorant Garamond',Georgia,serif;color:var(--forest)">Merci.</div>
++<h1 style="font-size:26px;margin-top:10px">{% if already %}Your answers were already received{% else %}Answers submitted{% endif %}, {{ applicant.full_name.split(' ')[0] }}.</h1>
++<p class="muted">Our team will review your test for the {{ applicant.role.title }} position and get back to you at {{ applicant.email }}.</p>
++</div>
++{% endblock %}
+diff --git a/app/webhooks.py b/app/webhooks.py
+new file mode 100644
+index 0000000..6ca613d
+--- /dev/null
++++ b/app/webhooks.py
+@@ -0,0 +1,73 @@
++"""ClickUp -> app sync. A webhook registered with `flask clickup-webhook-setup` calls
++POST /webhooks/clickup whenever a task's status changes on the board; the matching applicant's
++status is updated here without pushing back (the app's own pushes come back through this endpoint
++too and are ignored because the status already matches — no loops).
++
++Signature: ClickUp signs each delivery with HMAC-SHA256 of the raw body using the webhook secret
++(X-Signature header). Set CLICKUP_WEBHOOK_SECRET to enforce verification.
++"""
++import hashlib
++import hmac
++import logging
++
++from flask import Blueprint, current_app, jsonify, request
++
++from . import clickup
++from .models import Applicant, db, log_event
++
++log = logging.getLogger(__name__)
++bp = Blueprint("webhooks", __name__)
++
++
++def _verify(raw):
++    secret = current_app.config["CLICKUP_WEBHOOK_SECRET"]
++    if not secret:
++        return True  # verification not configured yet
++    given = request.headers.get("X-Signature", "")
++    want = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
++    return hmac.compare_digest(given, want)
++
++
++def _status_name(payload):
++    """Pull the new status name out of a taskStatusUpdated payload (shape varies slightly)."""
++    for item in payload.get("history_items") or []:
++        after = item.get("after")
++        if isinstance(after, dict) and after.get("status"):
++            return after["status"]
++        if isinstance(after, str) and item.get("field") == "status":
++            return after
++    status = payload.get("task", {}).get("status")
++    if isinstance(status, dict):
++        return status.get("status")
++    return None
++
++
++@bp.post("/clickup")
++def clickup_webhook():
++    raw = request.get_data()
++    if not _verify(raw):
++        return jsonify(error="bad signature"), 401
++    payload = request.get_json(silent=True) or {}
++    event = payload.get("event", "")
++    task_id = payload.get("task_id") or payload.get("task", {}).get("id")
++    if event != "taskStatusUpdated" or not task_id:
++        return jsonify(ok=True, ignored=event or "no event")
++
++    a = Applicant.query.filter_by(clickup_task_id=str(task_id)).filter(Applicant.deleted_at.is_(None)).first()
++    if not a:
++        return jsonify(ok=True, ignored="unknown task")
++
++    name = _status_name(payload)
++    slug = clickup.status_from_clickup(name)
++    if not slug:
++        log.info("ClickUp webhook: unmapped status %r on task %s", name, task_id)
++        return jsonify(ok=True, ignored=f"unmapped status {name!r}")
++    if slug == a.status:
++        return jsonify(ok=True, unchanged=slug)  # our own push echoing back — no loop
++
++    old = a.status
++    a.status = slug
++    log_event(a, "status_changed", f"{old} -> {slug} (changed on ClickUp)", actor="clickup")
++    db.session.commit()
++    log.info("ClickUp webhook: %s %s -> %s", a.public_id, old, slug)
++    return jsonify(ok=True, applicant=a.public_id, status=slug)
+-- 
+2.43.0
+
+
+From 7a4ac0c5025ba9bdea4d91248720b77313f215da Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 3 Sep 2026 10:46:07 +0000
+Subject: [PATCH 4/4] Fix test-email delivery and make ClickUp two-way sync
+ fully automatic
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+User testing found: (1) test emails were not reaching candidates, (2) board-side status
+changes were not reflected in the app.
+
+- Mail: new gmail_api backend that reuses the GOOGLE_OAUTH_* (Drive) credentials — no Gmail
+  App Password needed; gdrive_auth.py now also requests gmail.send. Backend auto-selected:
+  smtp if MAIL_USERNAME/PASSWORD set, else gmail_api if Google creds present, else off.
+- Never claim TEST SENT unless the mail actually left; process-pending retries unsent tests
+  and promotes to test_sent on success; admin per-applicant Send/Resend-test button.
+- Dashboard system banner: live email status + 'Send test email' diagnostic, ClickUp sync
+  mode (WEBHOOK ACTIVE / POLLING ONLY).
+- ClickUp -> app sync needs zero setup now: webhook self-registers at startup (secret kept
+  in a new settings table, used for HMAC verification), plus a polling reconciler every
+  CLICKUP_POLL_MINUTES (default 10) that adopts board changes and re-pushes recent app
+  changes that never landed — statuses converge even without the webhook.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JcN7fd3GzJkJXg5WQpuUjU
+---
+ .env.example                              |  16 ++-
+ README.md                                 |  13 +-
+ app/__init__.py                           |  14 ++-
+ app/admin.py                              |  33 ++++-
+ app/config.py                             |  13 +-
+ app/mailer.py                             |  55 +++++++--
+ app/models.py                             |  23 ++++
+ app/pipeline.py                           |  35 ++++++
+ app/sync.py                               | 142 ++++++++++++++++++++++
+ app/templates/admin/applicant_detail.html |   1 +
+ app/templates/admin/dashboard.html        |   8 ++
+ app/webhooks.py                           |   3 +-
+ scripts/gdrive_auth.py                    |   6 +-
+ 13 files changed, 331 insertions(+), 31 deletions(-)
+ create mode 100644 app/sync.py
+
+diff --git a/.env.example b/.env.example
+index 0371216..42873e0 100644
+--- a/.env.example
++++ b/.env.example
+@@ -46,12 +46,16 @@ REJECT_BELOW=50                     # score below 50 -> REJECTED
+ SELECT_ABOVE=60                     # 50-60 -> FILTRED APPLICATION; above 60 -> SELECTED (or TEST SENT if the role has a test)
+ 
+ # --- candidate email (test invitations) ---
+-MAIL_USERNAME=hr@tweezgroup.com     # Gmail account that sends the tests
+-MAIL_PASSWORD=                      # Gmail App Password (Google Account -> Security -> 2-Step -> App passwords)
+-MAIL_FROM=
+-
+-# --- ClickUp -> app webhook (two-way sync); run `flask clickup-webhook-setup` once, then set: ---
+-CLICKUP_WEBHOOK_SECRET=
++# Easiest: leave MAIL_* empty -> the app uses the Gmail API with the same GOOGLE_OAUTH_* credentials
++# as Drive (re-run scripts/gdrive_auth.py once so the token covers gmail.send; enable the Gmail API).
++# Or classic SMTP with an App Password:
++MAIL_USERNAME=
++MAIL_PASSWORD=
++MAIL_FROM=hr@tweezgroup.com
++
++# --- ClickUp two-way sync: fully automatic (webhook self-registers + polling fallback) ---
++CLICKUP_WEBHOOK_AUTOREGISTER=true
++CLICKUP_POLL_MINUTES=10
+ 
+ # --- GDPR ---
+ RETENTION_MONTHS=12
+diff --git a/README.md b/README.md
+index 93afa37..09da2ed 100644
+--- a/README.md
++++ b/README.md
+@@ -67,17 +67,16 @@ Thresholds are `REJECT_BELOW` / `SELECT_ABOVE` env vars; `AUTO_STATUS_ENABLED=fa
+ 
+ ### Written technical test per role
+ 
+-In */admin → role form*: paste the **test questions** (exactly as candidates will see them) and the private **answer key**. Leave the questions empty and the role simply has no test. When an applicant scores above the threshold, they receive an email (Gmail SMTP — set `MAIL_USERNAME` + `MAIL_PASSWORD` App Password) with a unique one-submission link `/test/<token>`; they answer online; Claude grades the answers against the key; the status moves to TEST RETURNED and the full result (score, per-question breakdown, strengths/weaknesses/flags) is posted as a comment on the ClickUp task, tagging the team. If email isn't configured, the applicant stays in SELECTED and the test link is posted on the ClickUp task for manual sending.
++In */admin → role form*: paste the **test questions** (exactly as candidates will see them) and the private **answer key**. Leave the questions empty and the role simply has no test. When an applicant scores above the threshold, they receive an email (two options: **Gmail API**, which reuses the same Google authorisation as Drive — re-run `python scripts/gdrive_auth.py` once so the token also covers `gmail.send`, and enable the Gmail API in the Google Cloud project — or **SMTP** with `MAIL_USERNAME` + `MAIL_PASSWORD` App Password) with a unique one-submission link `/test/<token>`; they answer online; Claude grades the answers against the key; the status moves to TEST RETURNED and the full result (score, per-question breakdown, strengths/weaknesses/flags) is posted as a comment on the ClickUp task, tagging the team. If email isn't configured or fails, the applicant stays in SELECTED, the test link is posted on the ClickUp task for manual sending, and `flask process-pending` (or the admin's *Send test email* button on the applicant page) sends it as soon as mail works — the status then moves to TEST SENT. The dashboard shows a live **Email / ClickUp sync status banner** with a "Send test email" diagnostic.
+ 
+-### Two-way ClickUp sync
++### Two-way ClickUp sync (zero-setup)
+ 
+-App → ClickUp was already automatic. For ClickUp → app, run once in the server shell:
++App → ClickUp is immediate. ClickUp → app works two ways, both automatic:
+ 
+-```bash
+-flask --app wsgi clickup-webhook-setup     # registers the webhook, prints CLICKUP_WEBHOOK_SECRET
+-```
++1. **Webhook (instant)** — on startup the app registers its own `taskStatusUpdated` webhook with ClickUp and stores the signing secret in its database. Nothing to run, nothing to configure. The dashboard banner shows *WEBHOOK ACTIVE* once registered. (`flask clickup-webhook-setup` still exists as a manual fallback; `CLICKUP_WEBHOOK_AUTOREGISTER=false` disables auto-registration.)
++2. **Polling reconciler (backup)** — every `CLICKUP_POLL_MINUTES` (default 10) the app compares each active applicant with their task and converges: a change made on the board is adopted into the app; a recent app-side change that never reached the board is pushed again. So statuses match even if the webhook can't reach a sleeping instance.
+ 
+-add the printed `CLICKUP_WEBHOOK_SECRET` to the environment and redeploy. From then on, dragging a task to another column on the board updates the applicant here within seconds (signature-verified; echoes of the app's own pushes are ignored, so no loops).
++Statuses are the same ordered list in both places: New (app only) → FILTRED APPLICATION → SELECTED/ IN PROGRESS → TEST SENT → TEST RETURNED → INTERVIEW DONE → 2ND INTERVIEW DONE → CONTRACT SENT → REJECTED / HIRED.
+ 
+ ### Automation, step by step
+ 
+diff --git a/app/__init__.py b/app/__init__.py
+index 891105e..0a654f4 100644
+--- a/app/__init__.py
++++ b/app/__init__.py
+@@ -1,4 +1,5 @@
+ import logging
++import os
+ 
+ import click
+ from dotenv import load_dotenv
+@@ -60,6 +61,11 @@ def create_app(config_object=Config):
+         _auto_migrate()
+ 
+     register_cli(app)
++
++    # Two-way ClickUp sync: webhook auto-registration + polling reconciler (skipped for CLI commands/tests)
++    if not app.config.get("TESTING") and os.environ.get("DISABLE_BACKGROUND_SYNC") != "1":
++        from . import sync
++        sync.start_background(app)
+     return app
+ 
+ 
+@@ -215,13 +221,17 @@ def register_cli(app):
+ 
+     @app.cli.command("process-pending")
+     def process_pending():
+-        """Retry the auto-summary / ClickUp task / summary comment for applicants where it is missing."""
+-        from .pipeline import pending_query, process_application
++        """Retry anything missing: summary, status, ClickUp task/comments, unsent tests, ungraded tests."""
++        from .pipeline import pending_query, process_application, process_test_submission, retry_unsent_tests
+         rows = pending_query().all()
+         click.echo(f"{len(rows)} applicant(s) pending.")
+         for a in rows:
+             done = process_application(a.id, background=False)
++            if a.test_submitted_at and a.test_evaluation is None:
++                done += process_test_submission(a.id, background=False)
+             click.echo(f"  {a.public_id} {a.full_name}: {', '.join(done) or 'nothing changed'}")
++        for line in retry_unsent_tests():
++            click.echo("  " + line)
+ 
+     @app.cli.command("rotate-keys")
+     def rotate_keys():
+diff --git a/app/admin.py b/app/admin.py
+index 41269dc..5a57b0d 100644
+--- a/app/admin.py
++++ b/app/admin.py
+@@ -6,7 +6,7 @@ from functools import wraps
+ from flask import (Blueprint, Response, abort, current_app, flash, redirect, render_template,
+                    request, send_file, session, url_for)
+ 
+-from . import clickup
++from . import clickup, mailer
+ from .models import STATUSES, STATUS_LABELS, Applicant, Role, db, log_event, slugify
+ from .naming import code_for_title
+ from .storage import get_storage
+@@ -49,8 +49,13 @@ def dashboard():
+     base = Applicant.query.filter(Applicant.deleted_at.is_(None))
+     counts = {s: base.filter_by(status=s).count() for s in STATUSES}
+     recent = base.order_by(Applicant.created_at.desc()).limit(10).all()
++    from .models import Setting
++    mail_state, mail_msg = mailer.status()
++    webhook_ok = bool(current_app.config["CLICKUP_WEBHOOK_SECRET"] or Setting.get("clickup_webhook_secret"))
+     return render_template("admin/dashboard.html", roles=roles, counts=counts, recent=recent,
+-                           total=base.count(), statuses=STATUSES)
++                           total=base.count(), statuses=STATUSES,
++                           mail_state=mail_state, mail_msg=mail_msg, webhook_ok=webhook_ok,
++                           poll_minutes=current_app.config["CLICKUP_POLL_MINUTES"])
+ 
+ 
+ # ---------- roles ----------
+@@ -102,6 +107,21 @@ def _save_role(role):
+     return redirect(url_for("admin.applicants", role=role.slug))
+ 
+ 
++@bp.post("/mail-test")
++@login_required
++def mail_test():
++    """Send a test email to the admin's chosen address to verify the mail configuration."""
++    to = request.form.get("to", "").strip()
++    if not to:
++        flash("Enter an address to send the test email to.", "error")
++    elif mailer.send(to, f"{current_app.config['COMPANY_NAME']} recruiting — mail test",
++                     "This is a test email from the applicant system. Mail is configured correctly."):
++        flash(f"Test email sent to {to} — check the inbox.", "ok")
++    else:
++        flash("Sending failed — check the mail settings (see the banner) and the server logs.", "error")
++    return redirect(url_for("admin.dashboard"))
++
++
+ @bp.post("/roles/<int:role_id>/toggle")
+ @login_required
+ def role_toggle(role_id):
+@@ -180,6 +200,15 @@ def applicant_detail(public_id):
+             a.notes = request.form.get("notes", "").strip() or None
+             log_event(a, "note", "Recruiter notes updated", actor="admin")
+             flash("Notes saved.", "ok")
++        elif action == "send_test":
++            from . import pipeline
++            if not (a.role.test_questions and a.role.test_questions.strip()):
++                flash("This role has no test defined — add one in the role form first.", "error")
++            else:
++                sent, url = pipeline.resend_test(a)
++                flash(f"Test email sent to {a.email}." if sent
++                      else f"Email failed — send the link manually: {url}", "ok" if sent else "error")
++            return redirect(url_for("admin.applicant_detail", public_id=public_id))
+         elif action == "process":
+             from . import pipeline
+             db.session.commit()
+diff --git a/app/config.py b/app/config.py
+index 6d232f2..85b74ee 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -103,15 +103,22 @@ class Config:
+                                                                # score >  60            -> selected (or test_sent if the role has a test)
+ 
+     # --- candidate email (test invitations) ---
+-    MAIL_BACKEND = os.environ.get("MAIL_BACKEND", "smtp" if os.environ.get("MAIL_USERNAME") else "off")  # smtp | log | off
++    # smtp: MAIL_USERNAME + MAIL_PASSWORD (app password) | gmail_api: reuses the GOOGLE_OAUTH_* Drive
++    # credentials (re-run scripts/gdrive_auth.py once so the token also covers gmail.send) | log | off
++    MAIL_BACKEND = os.environ.get(
++        "MAIL_BACKEND",
++        "smtp" if os.environ.get("MAIL_USERNAME") and os.environ.get("MAIL_PASSWORD")
++        else ("gmail_api" if os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN") else "off"))
+     MAIL_SERVER = os.environ.get("MAIL_SERVER", "smtp.gmail.com")
+     MAIL_PORT = int(os.environ.get("MAIL_PORT", "587"))
+     MAIL_USERNAME = _env("MAIL_USERNAME")            # e.g. hr@tweezgroup.com
+     MAIL_PASSWORD = _env("MAIL_PASSWORD")            # Gmail App Password (Google Account -> Security -> App passwords)
+     MAIL_FROM = _env("MAIL_FROM")                    # defaults to MAIL_USERNAME
+ 
+-    # --- ClickUp -> app webhook (two-way sync) ---
+-    CLICKUP_WEBHOOK_SECRET = _env("CLICKUP_WEBHOOK_SECRET")  # printed by `flask clickup-webhook-setup`
++    # --- ClickUp -> app two-way sync ---
++    CLICKUP_WEBHOOK_SECRET = _env("CLICKUP_WEBHOOK_SECRET")        # optional; auto-registered secret is kept in the DB
++    CLICKUP_WEBHOOK_AUTOREGISTER = _bool("CLICKUP_WEBHOOK_AUTOREGISTER", True)  # register the webhook at startup
++    CLICKUP_POLL_MINUTES = int(os.environ.get("CLICKUP_POLL_MINUTES", "10"))    # 0 disables the polling fallback
+ 
+     # --- GDPR ---
+     RETENTION_MONTHS = int(os.environ.get("RETENTION_MONTHS", "12"))
+diff --git a/app/mailer.py b/app/mailer.py
+index 4fbe1a6..c52f5aa 100644
+--- a/app/mailer.py
++++ b/app/mailer.py
+@@ -17,7 +17,42 @@ log = logging.getLogger(__name__)
+ 
+ def configured():
+     cfg = current_app.config
+-    return cfg["MAIL_BACKEND"] == "smtp" and cfg["MAIL_USERNAME"] and cfg["MAIL_PASSWORD"]
++    if cfg["MAIL_BACKEND"] == "smtp":
++        return bool(cfg["MAIL_USERNAME"] and cfg["MAIL_PASSWORD"])
++    if cfg["MAIL_BACKEND"] == "gmail_api":
++        return bool(cfg["GOOGLE_OAUTH_REFRESH_TOKEN"] and cfg["GOOGLE_OAUTH_CLIENT_ID"])
++    return cfg["MAIL_BACKEND"] == "log"
++
++
++def status():
++    """One line for the admin dashboard: which backend, and is it usable."""
++    cfg = current_app.config
++    b = cfg["MAIL_BACKEND"]
++    if b == "off":
++        return "off", "Email is OFF — set MAIL_USERNAME+MAIL_PASSWORD (SMTP) or re-run gdrive_auth.py for Gmail API. Tests cannot be sent."
++    if b == "smtp":
++        return ("ok", f"SMTP via {cfg['MAIL_SERVER']} as {cfg['MAIL_USERNAME']}") if configured() else                ("error", "SMTP selected but MAIL_USERNAME/MAIL_PASSWORD missing")
++    if b == "gmail_api":
++        return ("ok", "Gmail API using the Google (Drive) authorisation") if configured() else                ("error", "gmail_api selected but GOOGLE_OAUTH_* credentials missing")
++    return "ok", "log backend (development — mails are only logged)"
++
++
++def _gmail_send(msg):
++    """Send through the Gmail API with the same OAuth credentials used for Drive.
++    The refresh token must include the gmail.send scope (re-run scripts/gdrive_auth.py once)."""
++    import base64
++
++    from google.oauth2.credentials import Credentials
++    from googleapiclient.discovery import build
++
++    cfg = current_app.config
++    creds = Credentials(None, refresh_token=cfg["GOOGLE_OAUTH_REFRESH_TOKEN"],
++                        client_id=cfg["GOOGLE_OAUTH_CLIENT_ID"], client_secret=cfg["GOOGLE_OAUTH_CLIENT_SECRET"],
++                        token_uri="https://oauth2.googleapis.com/token")
++    service = current_app.extensions.get("_gmail_service") or build("gmail", "v1", credentials=creds,
++                                                                    cache_discovery=False)
++    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
++    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+ 
+ 
+ def send(to, subject, body):
+@@ -27,21 +62,25 @@ def send(to, subject, body):
+         current_app.extensions.setdefault("_sent_mail", []).append({"to": to, "subject": subject, "body": body})
+         return True
+     if not configured():
+-        log.warning("Mail not configured (set MAIL_USERNAME/MAIL_PASSWORD); could not email %s", to)
++        log.warning("Mail not configured (backend=%s); could not email %s", cfg["MAIL_BACKEND"], to)
+         return False
+     msg = EmailMessage()
+-    msg["From"] = cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"]
++    msg["From"] = cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"] or "me"
+     msg["To"] = to
+     msg["Subject"] = subject
+     msg.set_content(body)
+     try:
+-        with smtplib.SMTP(cfg["MAIL_SERVER"], cfg["MAIL_PORT"], timeout=20) as s:
+-            s.starttls()
+-            s.login(cfg["MAIL_USERNAME"], cfg["MAIL_PASSWORD"])
+-            s.send_message(msg)
++        if cfg["MAIL_BACKEND"] == "gmail_api":
++            _gmail_send(msg)
++        else:
++            with smtplib.SMTP(cfg["MAIL_SERVER"], cfg["MAIL_PORT"], timeout=20) as s:
++                s.starttls()
++                s.login(cfg["MAIL_USERNAME"], cfg["MAIL_PASSWORD"])
++                s.send_message(msg)
++        log.info("Mail sent to %s (%s): %r", to, cfg["MAIL_BACKEND"], subject)
+         return True
+     except Exception as exc:
+-        log.warning("Mail send failed to %s: %s", to, exc)
++        log.warning("Mail send failed to %s via %s: %s", to, cfg["MAIL_BACKEND"], exc)
+         return False
+ 
+ 
+diff --git a/app/models.py b/app/models.py
+index 66a43c5..8e6e0f6 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -187,6 +187,29 @@ class Applicant(db.Model):
+         return d
+ 
+ 
++class Setting(db.Model):
++    """Small key/value store for state the app manages itself (e.g. the ClickUp webhook secret)."""
++    __tablename__ = "settings"
++
++    key = db.Column(db.String(80), primary_key=True)
++    value = db.Column(db.Text)
++    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
++
++    @staticmethod
++    def get(key, default=None):
++        row = db.session.get(Setting, key)
++        return row.value if row else default
++
++    @staticmethod
++    def put(key, value):
++        row = db.session.get(Setting, key)
++        if row is None:
++            db.session.add(Setting(key=key, value=value))
++        else:
++            row.value = value
++        db.session.commit()
++
++
+ class Event(db.Model):
+     """Audit trail per applicant: status changes, ClickUp sync, agent actions, emails sent."""
+     __tablename__ = "events"
+diff --git a/app/pipeline.py b/app/pipeline.py
+index c1e2de8..2396dc5 100644
+--- a/app/pipeline.py
++++ b/app/pipeline.py
+@@ -187,6 +187,41 @@ def _run_test(app, applicant_id):
+         return done
+ 
+ 
++def retry_unsent_tests():
++    """Applicants who qualified for a test but never got the email (mail was down/unconfigured):
++    try sending again and move them to test_sent on success."""
++    out = []
++    rows = (Applicant.query.filter(Applicant.deleted_at.is_(None), Applicant.status == "selected",
++                                   Applicant.test_sent_at.is_(None))
++            .order_by(Applicant.created_at.asc()).limit(50).all())
++    for a in rows:
++        if not (a.role.test_questions and a.role.test_questions.strip()):
++            continue
++        sent, url = send_test(a)
++        if sent:
++            old = a.status
++            a.status = "test_sent"
++            log_event(a, "status_changed", f"{old} -> test_sent (test email retried successfully)", actor="system")
++            clickup.sync_status(a)
++            out.append(f"{a.public_id} {a.full_name}: test sent on retry")
++        else:
++            out.append(f"{a.public_id} {a.full_name}: mail still failing ({url})")
++        db.session.commit()
++    return out
++
++
++def resend_test(applicant):
++    """Admin button: (re)send the test email now. Returns (sent, url)."""
++    sent, url = send_test(applicant)
++    if sent and applicant.status in ("new", "filtered", "selected"):
++        old = applicant.status
++        applicant.status = "test_sent"
++        log_event(applicant, "status_changed", f"{old} -> test_sent (test sent from admin)", actor="admin")
++        clickup.sync_status(applicant)
++    db.session.commit()
++    return sent, url
++
++
+ def _has_event(a, kind, message_prefix):
+     return Event.query.filter(Event.applicant_id == a.id, Event.kind == kind,
+                               Event.message.like(f"{message_prefix}%")).count() > 0
+diff --git a/app/sync.py b/app/sync.py
+new file mode 100644
+index 0000000..d123ca2
+--- /dev/null
++++ b/app/sync.py
+@@ -0,0 +1,142 @@
++"""Keeps the app and ClickUp in the same state, without manual setup.
++
++1. Webhook auto-registration (startup, background): if a ClickUp token and a public base URL are
++   configured, the app registers its own `taskStatusUpdated` webhook and stores the signing secret
++   in the settings table. No CLI command, no env var needed (CLICKUP_WEBHOOK_SECRET still wins if set).
++
++2. Polling reconciler (every CLICKUP_POLL_MINUTES): even if the webhook can't reach the app
++   (sleeping instance, registration refused), statuses converge. For each active applicant with a
++   task, the task's current status is fetched and compared:
++     - app changed recently (last status_changed by admin/agent/claude/system) -> push app -> ClickUp
++     - otherwise -> adopt the board's status (ClickUp is the recruiters' working surface)
++"""
++import logging
++import os
++import threading
++import time
++from datetime import timedelta
++
++import requests
++
++from . import clickup
++from .models import Applicant, Event, Setting, db, log_event, utcnow
++
++log = logging.getLogger(__name__)
++API = os.environ.get("CLICKUP_API_BASE", "https://api.clickup.com/api/v2")
++
++WEBHOOK_SECRET_KEY = "clickup_webhook_secret"
++TERMINAL = ("hired", "rejected")
++
++
++def webhook_secret(app):
++    return app.config["CLICKUP_WEBHOOK_SECRET"] or Setting.get(WEBHOOK_SECRET_KEY)
++
++
++def _headers(app):
++    return {"Authorization": app.config["CLICKUP_API_TOKEN"], "Content-Type": "application/json"}
++
++
++def ensure_webhook(app):
++    """Idempotently register the ClickUp -> app webhook and store its secret. Returns a status string."""
++    cfg = app.config
++    base = cfg["PUBLIC_BASE_URL"]
++    if not (cfg["CLICKUP_ENABLED"] and cfg["CLICKUP_API_TOKEN"]):
++        return "clickup disabled"
++    if "localhost" in base or "127.0.0.1" in base:
++        return "skipped (PUBLIC_BASE_URL is local)"
++    endpoint = f"{base}/webhooks/clickup"
++    try:
++        r = requests.get(f"{API}/team/{cfg['CLICKUP_TEAM_ID']}/webhook", headers=_headers(app), timeout=15)
++        r.raise_for_status()
++        for wh in r.json().get("webhooks", []):
++            if wh.get("endpoint") == endpoint:
++                secret = wh.get("secret")
++                if secret and Setting.get(WEBHOOK_SECRET_KEY) != secret:
++                    Setting.put(WEBHOOK_SECRET_KEY, secret)
++                return f"already registered ({wh.get('id')})"
++        r = requests.post(f"{API}/team/{cfg['CLICKUP_TEAM_ID']}/webhook",
++                          json={"endpoint": endpoint, "events": ["taskStatusUpdated"]},
++                          headers=_headers(app), timeout=15)
++        r.raise_for_status()
++        data = r.json()
++        wh = data.get("webhook", data)
++        secret = wh.get("secret", "")
++        if secret:
++            Setting.put(WEBHOOK_SECRET_KEY, secret)
++        log.info("ClickUp webhook registered: %s -> %s", data.get("id") or wh.get("id"), endpoint)
++        return "registered"
++    except Exception as exc:
++        log.warning("ClickUp webhook auto-registration failed: %s", exc)
++        return f"failed: {exc}"
++
++
++def get_task_status(app, task_id):
++    """Current status name of a ClickUp task, or None on any error."""
++    try:
++        r = requests.get(f"{API}/task/{task_id}", headers=_headers(app), timeout=15)
++        r.raise_for_status()
++        status = r.json().get("status")
++        return status.get("status") if isinstance(status, dict) else status
++    except Exception as exc:
++        log.warning("ClickUp: could not read task %s: %s", task_id, exc)
++        return None
++
++
++def _app_changed_recently(a, minutes=30):
++    """True when the newest status_changed event was made in the app (not from ClickUp) recently."""
++    ev = (Event.query.filter(Event.applicant_id == a.id, Event.kind == "status_changed")
++          .order_by(Event.created_at.desc()).first())
++    if not ev or ev.actor == "clickup":
++        return False
++    return ev.created_at >= utcnow() - timedelta(minutes=minutes)
++
++
++def reconcile_once(app, limit=40):
++    """One reconciliation pass. Returns a summary dict."""
++    out = {"checked": 0, "pushed": 0, "adopted": 0}
++    with app.app_context():
++        rows = (Applicant.query.filter(Applicant.deleted_at.is_(None),
++                                       Applicant.clickup_task_id.isnot(None),
++                                       Applicant.status.notin_(TERMINAL))
++                .order_by(Applicant.updated_at.desc()).limit(limit).all())
++        for a in rows:
++            name = get_task_status(app, a.clickup_task_id)
++            if not name:
++                continue
++            out["checked"] += 1
++            slug = clickup.status_from_clickup(name)
++            if not slug or slug == a.status:
++                continue
++            if _app_changed_recently(a):
++                clickup.sync_status(a)   # our change didn't land on the board yet -> push again
++                out["pushed"] += 1
++            else:
++                old = a.status
++                a.status = slug
++                log_event(a, "status_changed", f"{old} -> {slug} (reconciled from ClickUp)", actor="clickup")
++                out["adopted"] += 1
++        db.session.commit()
++        db.session.remove()
++    return out
++
++
++def start_background(app):
++    """Start the webhook registration (once) and the polling reconciler (looping) in daemon threads."""
++    def _boot():
++        time.sleep(3)  # let the web server come up first
++        with app.app_context():
++            if app.config["CLICKUP_WEBHOOK_AUTOREGISTER"]:
++                log.info("ClickUp webhook: %s", ensure_webhook(app))
++        minutes = app.config["CLICKUP_POLL_MINUTES"]
++        if minutes <= 0 or not app.config["CLICKUP_ENABLED"]:
++            return
++        while True:
++            time.sleep(minutes * 60)
++            try:
++                summary = reconcile_once(app)
++                if summary["pushed"] or summary["adopted"]:
++                    log.info("ClickUp reconcile: %s", summary)
++            except Exception as exc:
++                log.warning("ClickUp reconcile failed: %s", exc)
++
++    threading.Thread(target=_boot, daemon=True).start()
+diff --git a/app/templates/admin/applicant_detail.html b/app/templates/admin/applicant_detail.html
+index ff85061..eed3015 100644
+--- a/app/templates/admin/applicant_detail.html
++++ b/app/templates/admin/applicant_detail.html
+@@ -31,6 +31,7 @@
+     <p><span class="muted">Score</span> <span class="score" style="font-size:22px">{{ a.score if a.score is not none else '–' }}</span>{% if a.score is not none %}<span class="muted">/100</span>{% endif %}</p>
+     {% if a.ai_summary %}<p style="white-space:pre-wrap">{{ a.ai_summary }}</p>{% else %}<p class="muted">Not summarised yet.</p>{% endif %}
+     <form method="post" style="display:inline"><input type="hidden" name="action" value="process"><button class="btn small secondary" type="submit">Re-run summary + ClickUp sync</button></form>
++    {% if a.role.test_questions %}<form method="post" style="display:inline"><input type="hidden" name="action" value="send_test"><button class="btn small secondary" type="submit">{{ 'Resend' if a.test_sent_at else 'Send' }} test email</button></form>{% endif %}
+     <form method="post"><input type="hidden" name="action" value="notes">
+       <label>Recruiter notes</label><textarea name="notes">{{ a.notes or '' }}</textarea>
+       <p><button class="btn small secondary" type="submit">Save notes</button></p></form>
+diff --git a/app/templates/admin/dashboard.html b/app/templates/admin/dashboard.html
+index 33fd220..15e8a70 100644
+--- a/app/templates/admin/dashboard.html
++++ b/app/templates/admin/dashboard.html
+@@ -2,6 +2,14 @@
+ {% block title %}Dashboard — {{ company }} recruiting{% endblock %}
+ {% block content %}
+ <h1>Pipeline</h1>
++<div class="card" style="padding:14px 18px;display:flex;gap:22px;flex-wrap:wrap;align-items:center;font-size:14px">
++  <span><strong>Email:</strong> {% if mail_state == 'ok' %}<span class="pill filtered">OK</span>{% else %}<span class="pill rejected">NOT WORKING</span>{% endif %} <span class="muted">{{ mail_msg }}</span></span>
++  <span><strong>ClickUp sync:</strong> {% if webhook_ok %}<span class="pill filtered">WEBHOOK ACTIVE</span>{% else %}<span class="pill test_returned">POLLING ONLY</span>{% endif %} <span class="muted">board changes {% if webhook_ok %}arrive instantly; polling backup every {{ poll_minutes }} min{% else %}are picked up every {{ poll_minutes }} min{% endif %}</span></span>
++  <form method="post" action="{{ url_for('admin.mail_test') }}" class="row" style="gap:6px;margin-left:auto">
++    <input type="email" name="to" placeholder="you@tweezgroup.com" style="width:210px;padding:7px 10px">
++    <button class="btn small secondary" type="submit">Send test email</button>
++  </form>
++</div>
+ <p class="muted">{{ total }} active applicant{{ '' if total==1 else 's' }} across {{ roles|length }} role{{ '' if roles|length==1 else 's' }}</p>
+ <div class="grid cols-4">
+   {% for s in statuses %}<a class="stat" href="{{ url_for('admin.applicants', status=s) }}"><div class="n">{{ counts[s] }}</div><div class="l"><span class="pill {{ s }}">{{ labels[s] }}</span></div></a>{% endfor %}
+diff --git a/app/webhooks.py b/app/webhooks.py
+index 6ca613d..18c43c6 100644
+--- a/app/webhooks.py
++++ b/app/webhooks.py
+@@ -14,13 +14,14 @@ from flask import Blueprint, current_app, jsonify, request
+ 
+ from . import clickup
+ from .models import Applicant, db, log_event
++from .sync import webhook_secret
+ 
+ log = logging.getLogger(__name__)
+ bp = Blueprint("webhooks", __name__)
+ 
+ 
+ def _verify(raw):
+-    secret = current_app.config["CLICKUP_WEBHOOK_SECRET"]
++    secret = webhook_secret(current_app._get_current_object())
+     if not secret:
+         return True  # verification not configured yet
+     given = request.headers.get("X-Signature", "")
+diff --git a/scripts/gdrive_auth.py b/scripts/gdrive_auth.py
+index 654026d..df7d941 100644
+--- a/scripts/gdrive_auth.py
++++ b/scripts/gdrive_auth.py
+@@ -1,4 +1,6 @@
+-"""One-time helper: obtain a Google Drive refresh token for the account that owns TWEEZ-CV-BANK.
++"""One-time helper: obtain a Google refresh token (Drive + Gmail send) for the account that owns TWEEZ-CV-BANK.
++
++Also enable the "Gmail API" in the same Google Cloud project so test invitations can be sent from this account.
+ 
+ Google Cloud Console (avoids Error 400: redirect_uri_mismatch):
+ 
+@@ -24,7 +26,7 @@ import sys
+ 
+ from google_auth_oauthlib.flow import InstalledAppFlow
+ 
+-SCOPES = ["https://www.googleapis.com/auth/drive"]
++SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/gmail.send"]
+ DEFAULT_PORT = 8080
+ HOST = "127.0.0.1"
+ 
+-- 
+2.43.0
+

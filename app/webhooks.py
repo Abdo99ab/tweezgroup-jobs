@@ -14,13 +14,14 @@ from flask import Blueprint, current_app, jsonify, request
 
 from . import clickup
 from .models import Applicant, db, log_event
+from .sync import webhook_secret
 
 log = logging.getLogger(__name__)
 bp = Blueprint("webhooks", __name__)
 
 
 def _verify(raw):
-    secret = current_app.config["CLICKUP_WEBHOOK_SECRET"]
+    secret = webhook_secret(current_app._get_current_object())
     if not secret:
         return True  # verification not configured yet
     given = request.headers.get("X-Signature", "")

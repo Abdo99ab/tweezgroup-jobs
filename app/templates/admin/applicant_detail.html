@@ -31,6 +31,7 @@
     <p><span class="muted">Score</span> <span class="score" style="font-size:22px">{{ a.score if a.score is not none else '–' }}</span>{% if a.score is not none %}<span class="muted">/100</span>{% endif %}</p>
     {% if a.ai_summary %}<p style="white-space:pre-wrap">{{ a.ai_summary }}</p>{% else %}<p class="muted">Not summarised yet.</p>{% endif %}
     <form method="post" style="display:inline"><input type="hidden" name="action" value="process"><button class="btn small secondary" type="submit">Re-run summary + ClickUp sync</button></form>
+    {% if a.role.test_questions %}<form method="post" style="display:inline"><input type="hidden" name="action" value="send_test"><button class="btn small secondary" type="submit">{{ 'Resend' if a.test_sent_at else 'Send' }} test email</button></form>{% endif %}
     <form method="post"><input type="hidden" name="action" value="notes">
       <label>Recruiter notes</label><textarea name="notes">{{ a.notes or '' }}</textarea>
       <p><button class="btn small secondary" type="submit">Save notes</button></p></form>

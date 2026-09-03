@@ -103,15 +103,22 @@ class Config:
                                                                # score >  60            -> selected (or test_sent if the role has a test)
 
     # --- candidate email (test invitations) ---
-    MAIL_BACKEND = os.environ.get("MAIL_BACKEND", "smtp" if os.environ.get("MAIL_USERNAME") else "off")  # smtp | log | off
+    # smtp: MAIL_USERNAME + MAIL_PASSWORD (app password) | gmail_api: reuses the GOOGLE_OAUTH_* Drive
+    # credentials (re-run scripts/gdrive_auth.py once so the token also covers gmail.send) | log | off
+    MAIL_BACKEND = os.environ.get(
+        "MAIL_BACKEND",
+        "smtp" if os.environ.get("MAIL_USERNAME") and os.environ.get("MAIL_PASSWORD")
+        else ("gmail_api" if os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN") else "off"))
     MAIL_SERVER = os.environ.get("MAIL_SERVER", "smtp.gmail.com")
     MAIL_PORT = int(os.environ.get("MAIL_PORT", "587"))
     MAIL_USERNAME = _env("MAIL_USERNAME")            # e.g. hr@tweezgroup.com
     MAIL_PASSWORD = _env("MAIL_PASSWORD")            # Gmail App Password (Google Account -> Security -> App passwords)
     MAIL_FROM = _env("MAIL_FROM")                    # defaults to MAIL_USERNAME
 
-    # --- ClickUp -> app webhook (two-way sync) ---
-    CLICKUP_WEBHOOK_SECRET = _env("CLICKUP_WEBHOOK_SECRET")  # printed by `flask clickup-webhook-setup`
+    # --- ClickUp -> app two-way sync ---
+    CLICKUP_WEBHOOK_SECRET = _env("CLICKUP_WEBHOOK_SECRET")        # optional; auto-registered secret is kept in the DB
+    CLICKUP_WEBHOOK_AUTOREGISTER = _bool("CLICKUP_WEBHOOK_AUTOREGISTER", True)  # register the webhook at startup
+    CLICKUP_POLL_MINUTES = int(os.environ.get("CLICKUP_POLL_MINUTES", "10"))    # 0 disables the polling fallback
 
     # --- GDPR ---
     RETENTION_MONTHS = int(os.environ.get("RETENTION_MONTHS", "12"))

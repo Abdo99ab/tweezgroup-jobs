@@ -68,17 +68,16 @@ Thresholds are `REJECT_BELOW` / `SELECT_ABOVE` env vars; `AUTO_STATUS_ENABLED=fa
 
 ### Written technical test per role
 
-In */admin → role form*: paste the **test questions** (exactly as candidates will see them) and the private **answer key**. Leave the questions empty and the role simply has no test. When an applicant scores above the threshold, they receive an email (Gmail SMTP — set `MAIL_USERNAME` + `MAIL_PASSWORD` App Password) with a unique one-submission link `/test/<token>`; they answer online; Claude grades the answers against the key; the status moves to TEST RETURNED and the full result (score, per-question breakdown, strengths/weaknesses/flags) is posted as a comment on the ClickUp task, tagging the team. If email isn't configured, the applicant stays in SELECTED and the test link is posted on the ClickUp task for manual sending.
+In */admin → role form*: paste the **test questions** (exactly as candidates will see them) and the private **answer key**. Leave the questions empty and the role simply has no test. When an applicant scores above the threshold, they receive an email (two options: **Gmail API**, which reuses the same Google authorisation as Drive — re-run `python scripts/gdrive_auth.py` once so the token also covers `gmail.send`, and enable the Gmail API in the Google Cloud project — or **SMTP** with `MAIL_USERNAME` + `MAIL_PASSWORD` App Password) with a unique one-submission link `/test/<token>`; they answer online; Claude grades the answers against the key; the status moves to TEST RETURNED and the full result (score, per-question breakdown, strengths/weaknesses/flags) is posted as a comment on the ClickUp task, tagging the team. If email isn't configured or fails, the applicant stays in SELECTED, the test link is posted on the ClickUp task for manual sending, and `flask process-pending` (or the admin's *Send test email* button on the applicant page) sends it as soon as mail works — the status then moves to TEST SENT. The dashboard shows a live **Email / ClickUp sync status banner** with a "Send test email" diagnostic.
 
-### Two-way ClickUp sync
+### Two-way ClickUp sync (zero-setup)
 
-App → ClickUp was already automatic. For ClickUp → app, run once in the server shell:
+App → ClickUp is immediate. ClickUp → app works two ways, both automatic:
 
-```bash
-flask --app wsgi clickup-webhook-setup     # registers the webhook, prints CLICKUP_WEBHOOK_SECRET
-```
+1. **Webhook (instant)** — on startup the app registers its own `taskStatusUpdated` webhook with ClickUp and stores the signing secret in its database. Nothing to run, nothing to configure. The dashboard banner shows *WEBHOOK ACTIVE* once registered. (`flask clickup-webhook-setup` still exists as a manual fallback; `CLICKUP_WEBHOOK_AUTOREGISTER=false` disables auto-registration.)
+2. **Polling reconciler (backup)** — every `CLICKUP_POLL_MINUTES` (default 10) the app compares each active applicant with their task and converges: a change made on the board is adopted into the app; a recent app-side change that never reached the board is pushed again. So statuses match even if the webhook can't reach a sleeping instance.
 
-add the printed `CLICKUP_WEBHOOK_SECRET` to the environment and redeploy. From then on, dragging a task to another column on the board updates the applicant here within seconds (signature-verified; echoes of the app's own pushes are ignored, so no loops).
+Statuses are the same ordered list in both places: New (app only) → FILTRED APPLICATION → SELECTED/ IN PROGRESS → TEST SENT → TEST RETURNED → INTERVIEW DONE → 2ND INTERVIEW DONE → CONTRACT SENT → REJECTED / HIRED.
 
 ### Automation, step by step
 

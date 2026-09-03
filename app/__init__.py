@@ -1,4 +1,5 @@
 import logging
+import os
 
 import click
 from dotenv import load_dotenv
@@ -60,6 +61,11 @@ def create_app(config_object=Config):
         _auto_migrate()
 
     register_cli(app)
+
+    # Two-way ClickUp sync: webhook auto-registration + polling reconciler (skipped for CLI commands/tests)
+    if not app.config.get("TESTING") and os.environ.get("DISABLE_BACKGROUND_SYNC") != "1":
+        from . import sync
+        sync.start_background(app)
     return app
 
 
@@ -238,8 +244,8 @@ def register_cli(app):
 
     @app.cli.command("process-pending")
     def process_pending():
-        """Retry the auto-summary / ClickUp task / summary comment for applicants where it is missing."""
-        from .pipeline import pending_query, process_application, process_test_submission
+        """Retry anything missing: summary, status, ClickUp task/comments, unsent tests, ungraded tests."""
+        from .pipeline import pending_query, process_application, process_test_submission, retry_unsent_tests
         rows = pending_query().all()
         click.echo(f"{len(rows)} applicant(s) pending.")
         for a in rows:
@@ -249,6 +255,8 @@ def register_cli(app):
             if a and a.test_submitted_at and a.test_evaluation is None:
                 done += process_test_submission(aid, background=False)
             click.echo(f"  {label}: {', '.join(done) or 'nothing changed'}")
+        for line in retry_unsent_tests():
+            click.echo("  " + line)
 
     @app.cli.command("rotate-keys")
     def rotate_keys():

@@ -187,6 +187,41 @@ def _run_test(app, applicant_id):
         return done
 
 
+def retry_unsent_tests():
+    """Applicants who qualified for a test but never got the email (mail was down/unconfigured):
+    try sending again and move them to test_sent on success."""
+    out = []
+    rows = (Applicant.query.filter(Applicant.deleted_at.is_(None), Applicant.status == "selected",
+                                   Applicant.test_sent_at.is_(None))
+            .order_by(Applicant.created_at.asc()).limit(50).all())
+    for a in rows:
+        if not (a.role.test_questions and a.role.test_questions.strip()):
+            continue
+        sent, url = send_test(a)
+        if sent:
+            old = a.status
+            a.status = "test_sent"
+            log_event(a, "status_changed", f"{old} -> test_sent (test email retried successfully)", actor="system")
+            clickup.sync_status(a)
+            out.append(f"{a.public_id} {a.full_name}: test sent on retry")
+        else:
+            out.append(f"{a.public_id} {a.full_name}: mail still failing ({url})")
+        db.session.commit()
+    return out
+
+
+def resend_test(applicant):
+    """Admin button: (re)send the test email now. Returns (sent, url)."""
+    sent, url = send_test(applicant)
+    if sent and applicant.status in ("new", "filtered", "selected"):
+        old = applicant.status
+        applicant.status = "test_sent"
+        log_event(applicant, "status_changed", f"{old} -> test_sent (test sent from admin)", actor="admin")
+        clickup.sync_status(applicant)
+    db.session.commit()
+    return sent, url
+
+
 def _has_event(a, kind, message_prefix):
     return Event.query.filter(Event.applicant_id == a.id, Event.kind == kind,
                               Event.message.like(f"{message_prefix}%")).count() > 0

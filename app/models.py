@@ -187,6 +187,29 @@ class Applicant(db.Model):
         return d
 
 
+class Setting(db.Model):
+    """Small key/value store for state the app manages itself (e.g. the ClickUp webhook secret)."""
+    __tablename__ = "settings"
+
+    key = db.Column(db.String(80), primary_key=True)
+    value = db.Column(db.Text)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    @staticmethod
+    def get(key, default=None):
+        row = db.session.get(Setting, key)
+        return row.value if row else default
+
+    @staticmethod
+    def put(key, value):
+        row = db.session.get(Setting, key)
+        if row is None:
+            db.session.add(Setting(key=key, value=value))
+        else:
+            row.value = value
+        db.session.commit()
+
+
 class Event(db.Model):
     """Audit trail per applicant: status changes, ClickUp sync, agent actions, emails sent."""
     __tablename__ = "events"

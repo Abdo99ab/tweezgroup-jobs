@@ -2,6 +2,14 @@
 {% block title %}Dashboard — {{ company }} recruiting{% endblock %}
 {% block content %}
 <h1>Pipeline</h1>
+<div class="card" style="padding:14px 18px;display:flex;gap:22px;flex-wrap:wrap;align-items:center;font-size:14px">
+  <span><strong>Email:</strong> {% if mail_state == 'ok' %}<span class="pill filtered">OK</span>{% else %}<span class="pill rejected">NOT WORKING</span>{% endif %} <span class="muted">{{ mail_msg }}</span></span>
+  <span><strong>ClickUp sync:</strong> {% if webhook_ok %}<span class="pill filtered">WEBHOOK ACTIVE</span>{% else %}<span class="pill test_returned">POLLING ONLY</span>{% endif %} <span class="muted">board changes {% if webhook_ok %}arrive instantly; polling backup every {{ poll_minutes }} min{% else %}are picked up every {{ poll_minutes }} min{% endif %}</span></span>
+  <form method="post" action="{{ url_for('admin.mail_test') }}" class="row" style="gap:6px;margin-left:auto">
+    <input type="email" name="to" placeholder="you@tweezgroup.com" style="width:210px;padding:7px 10px">
+    <button class="btn small secondary" type="submit">Send test email</button>
+  </form>
+</div>
 <p class="muted">{{ total }} active applicant{{ '' if total==1 else 's' }} across {{ roles|length }} role{{ '' if roles|length==1 else 's' }}</p>
 <div class="grid cols-4">
   {% for s in statuses %}<a class="stat" href="{{ url_for('admin.applicants', status=s) }}"><div class="n">{{ counts[s] }}</div><div class="l"><span class="pill {{ s }}">{{ labels[s] }}</span></div></a>{% endfor %}

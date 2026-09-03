@@ -6,7 +6,7 @@ from functools import wraps
 from flask import (Blueprint, Response, abort, current_app, flash, redirect, render_template,
                    request, send_file, session, url_for)
 
-from . import clickup
+from . import clickup, mailer
 from .models import STATUSES, STATUS_LABELS, Applicant, Role, db, log_event, slugify
 from .naming import code_for_title
 from .storage import get_storage
@@ -49,8 +49,13 @@ def dashboard():
     base = Applicant.query.filter(Applicant.deleted_at.is_(None))
     counts = {s: base.filter_by(status=s).count() for s in STATUSES}
     recent = base.order_by(Applicant.created_at.desc()).limit(10).all()
+    from .models import Setting
+    mail_state, mail_msg = mailer.status()
+    webhook_ok = bool(current_app.config["CLICKUP_WEBHOOK_SECRET"] or Setting.get("clickup_webhook_secret"))
     return render_template("admin/dashboard.html", roles=roles, counts=counts, recent=recent,
-                           total=base.count(), statuses=STATUSES)
+                           total=base.count(), statuses=STATUSES,
+                           mail_state=mail_state, mail_msg=mail_msg, webhook_ok=webhook_ok,
+                           poll_minutes=current_app.config["CLICKUP_POLL_MINUTES"])
 
 
 # ---------- roles ----------
@@ -100,6 +105,21 @@ def _save_role(role):
     db.session.commit()
     flash("Role saved.", "ok")
     return redirect(url_for("admin.applicants", role=role.slug))
+
+
+@bp.post("/mail-test")
+@login_required
+def mail_test():
+    """Send a test email to the admin's chosen address to verify the mail configuration."""
+    to = request.form.get("to", "").strip()
+    if not to:
+        flash("Enter an address to send the test email to.", "error")
+    elif mailer.send(to, f"{current_app.config['COMPANY_NAME']} recruiting — mail test",
+                     "This is a test email from the applicant system. Mail is configured correctly."):
+        flash(f"Test email sent to {to} — check the inbox.", "ok")
+    else:
+        flash("Sending failed — check the mail settings (see the banner) and the server logs.", "error")
+    return redirect(url_for("admin.dashboard"))
 
 
 @bp.post("/roles/<int:role_id>/toggle")
@@ -180,6 +200,15 @@ def applicant_detail(public_id):
             a.notes = request.form.get("notes", "").strip() or None
             log_event(a, "note", "Recruiter notes updated", actor="admin")
             flash("Notes saved.", "ok")
+        elif action == "send_test":
+            from . import pipeline
+            if not (a.role.test_questions and a.role.test_questions.strip()):
+                flash("This role has no test defined — add one in the role form first.", "error")
+            else:
+                sent, url = pipeline.resend_test(a)
+                flash(f"Test email sent to {a.email}." if sent
+                      else f"Email failed — send the link manually: {url}", "ok" if sent else "error")
+            return redirect(url_for("admin.applicant_detail", public_id=public_id))
         elif action == "process":
             from . import pipeline
             db.session.commit()

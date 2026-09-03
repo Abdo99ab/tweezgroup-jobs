@@ -1,4 +1,6 @@
-"""One-time helper: obtain a Google Drive refresh token for the account that owns TWEEZ-CV-BANK.
+"""One-time helper: obtain a Google refresh token (Drive + Gmail send) for the account that owns TWEEZ-CV-BANK.
+
+Also enable the "Gmail API" in the same Google Cloud project so test invitations can be sent from this account.
 
 Google Cloud Console (avoids Error 400: redirect_uri_mismatch):
 
@@ -24,7 +26,7 @@ import sys
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/drive"]
+SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/gmail.send"]
 DEFAULT_PORT = 8080
 HOST = "127.0.0.1"
 
