@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+from sqlalchemy.pool import NullPool
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -42,7 +44,15 @@ class Config:
             break
     SQLALCHEMY_DATABASE_URI = _db
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 280}
+    # Supabase/Neon transaction poolers (PgBouncer) break psycopg3 prepared statements.
+    # NullPool + prepare_threshold=None is the supported combination.
+    if _db.startswith("postgresql"):
+        SQLALCHEMY_ENGINE_OPTIONS = {
+            "poolclass": NullPool,
+            "connect_args": {"prepare_threshold": None},
+        }
+    else:
+        SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 280}
 
     # --- auth ---
     ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")

@@ -72,81 +72,70 @@ def _schema_race(exc):
     msg = str(exc).lower()
     return any(s in msg for s in (
         "already exists", "duplicate", "pg_type", "duplicatecolumn", "unique violation",
+        "prepared statement", "duplicatepreparedstatement",
     ))
 
 
 def _ensure_schema():
-    """Create missing tables and add missing columns. Safe under Gunicorn's multiple workers.
+    """Create missing tables and add missing columns.
 
-    Two workers used to race: both saw `settings` missing, both ran CREATE TABLE, and Postgres
-    raised UniqueViolation on pg_type_typname_nsp_index. One session-level advisory lock
-    covers create + migrate on the same connection.
+    Must work on Supabase's PgBouncer transaction pooler: no session advisory locks
+    (they don't survive COMMIT) and no SQLAlchemy inspector (prepared statements).
     """
-    from sqlalchemy import inspect, text
     from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
     log = logging.getLogger(__name__)
-    dialect = db.engine.dialect.name
-
-    with db.engine.connect() as conn:
-        locked = False
-        try:
-            if dialect == "postgresql":
-                conn.execute(text("SELECT pg_advisory_lock(874231)"))
-                conn.commit()
-                locked = True
-
-            try:
-                db.metadata.create_all(bind=conn)
-                conn.commit()
-            except (IntegrityError, ProgrammingError, OperationalError) as exc:
-                conn.rollback()
-                if not _schema_race(exc):
-                    raise
-                log.info("schema: concurrent create_all (%s); retrying", type(exc).__name__)
-                db.metadata.create_all(bind=conn)
-                conn.commit()
-
-            _auto_migrate(conn)
-            conn.commit()
-        finally:
-            if locked:
-                try:
-                    conn.execute(text("SELECT pg_advisory_unlock(874231)"))
-                    conn.commit()
-                except Exception:
-                    pass
+    try:
+        db.create_all()
+    except (IntegrityError, ProgrammingError, OperationalError) as exc:
+        db.session.rollback()
+        if not _schema_race(exc):
+            raise
+        log.info("schema: create_all raced (%s); continuing", type(exc).__name__)
+    try:
+        _auto_migrate()
+    except (IntegrityError, ProgrammingError, OperationalError) as exc:
+        db.session.rollback()
+        if not _schema_race(exc):
+            raise
+        log.info("schema: auto-migrate raced (%s); continuing", type(exc).__name__)
 
 
-def _auto_migrate(conn):
-    """Additive migrations: add any model column missing from an existing table."""
+def _auto_migrate():
+    """Additive migrations: ADD COLUMN IF NOT EXISTS (Postgres) or inspect-and-add (SQLite)."""
     from sqlalchemy import inspect, text
     from sqlalchemy.exc import OperationalError, ProgrammingError
 
     log = logging.getLogger(__name__)
     dialect = db.engine.dialect.name
-    insp = inspect(conn)
-    for table in db.metadata.sorted_tables:
-        if not insp.has_table(table.name):
-            continue
-        existing = {c["name"] for c in insp.get_columns(table.name)}
-        for col in table.columns:
-            if col.name in existing:
+
+    with db.engine.begin() as conn:
+        if dialect == "postgresql":
+            for table in db.metadata.sorted_tables:
+                for col in table.columns:
+                    ctype = col.type.compile(db.engine.dialect)
+                    conn.execute(text(
+                        f'ALTER TABLE IF EXISTS {table.name} '
+                        f'ADD COLUMN IF NOT EXISTS {col.name} {ctype}'
+                    ))
+            return
+
+        insp = inspect(conn)
+        for table in db.metadata.sorted_tables:
+            if not insp.has_table(table.name):
                 continue
-            ctype = col.type.compile(db.engine.dialect)
-            if dialect == "postgresql":
-                sql = f'ALTER TABLE {table.name} ADD COLUMN IF NOT EXISTS {col.name} {ctype}'
-            else:
-                sql = f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ctype}'
-            try:
-                conn.execute(text(sql))
-                log.info("auto-migrate: added %s.%s %s", table.name, col.name, ctype)
-                existing.add(col.name)
-            except (ProgrammingError, OperationalError) as exc:
-                if _schema_race(exc):
-                    existing.add(col.name)
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in existing:
                     continue
-                raise
+                ctype = col.type.compile(db.engine.dialect)
+                try:
+                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ctype}'))
+                    log.info("auto-migrate: added %s.%s %s", table.name, col.name, ctype)
+                except (ProgrammingError, OperationalError) as exc:
+                    if _schema_race(exc):
+                        continue
+                    raise
 
 
 def register_cli(app):
