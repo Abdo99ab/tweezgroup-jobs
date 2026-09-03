@@ -113,12 +113,12 @@ class Config:
                                                                # score >  60            -> selected (or test_sent if the role has a test)
 
     # --- candidate email (test invitations) ---
-    # smtp: MAIL_USERNAME + MAIL_PASSWORD (app password) | gmail_api: reuses the GOOGLE_OAUTH_* Drive
-    # credentials (re-run scripts/gdrive_auth.py once so the token also covers gmail.send) | log | off
-    MAIL_BACKEND = os.environ.get(
-        "MAIL_BACKEND",
-        "smtp" if os.environ.get("MAIL_USERNAME") and os.environ.get("MAIL_PASSWORD")
-        else ("gmail_api" if os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN") else "off"))
+    # Prefer Gmail API when Drive OAuth is present. Render (and many PaaS hosts) cannot
+    # reach smtp.gmail.com (Errno 101 Network is unreachable / outbound SMTP blocked).
+    # smtp: MAIL_USERNAME + MAIL_PASSWORD | gmail_api: GOOGLE_OAUTH_* | log | off
+    MAIL_BACKEND = os.environ.get("MAIL_BACKEND") or (
+        "gmail_api" if os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
+        else ("smtp" if os.environ.get("MAIL_USERNAME") and os.environ.get("MAIL_PASSWORD") else "off"))
     MAIL_SERVER = os.environ.get("MAIL_SERVER", "smtp.gmail.com")
     MAIL_PORT = int(os.environ.get("MAIL_PORT", "587"))
     MAIL_USERNAME = _env("MAIL_USERNAME")            # e.g. hr@tweezgroup.com

@@ -1,6 +1,7 @@
 """Candidate email sending.
 
 MAIL_BACKEND=smtp       — Gmail (or any SMTP): MAIL_USERNAME + MAIL_PASSWORD (Gmail App Password).
+                          Render cannot reach smtp.gmail.com (Errno 101); prefer gmail_api there.
 MAIL_BACKEND=gmail_api  — Gmail API using the same GOOGLE_OAUTH_* credentials as Drive
                           (re-run scripts/gdrive_auth.py so the token includes gmail.send).
 MAIL_BACKEND=log        — no real sending; the message is logged (development).
@@ -41,6 +42,31 @@ def status():
         return (("ok", "Gmail API using the Google (Drive) authorisation")
                 if configured() else ("error", "gmail_api selected but GOOGLE_OAUTH_* credentials missing"))
     return "ok", "log backend (development — mails are only logged)"
+
+
+def _gmail_api_ready():
+    cfg = current_app.config
+    return bool(cfg.get("GOOGLE_OAUTH_REFRESH_TOKEN") and cfg.get("GOOGLE_OAUTH_CLIENT_ID"))
+
+
+def _is_network_error(exc):
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) in (101, 111, 113, 110, 51, 61, 64, 65):
+        return True
+    text = str(exc).lower()
+    return any(s in text for s in (
+        "network is unreachable", "connection refused", "timed out",
+        "name or service not known", "temporary failure in name resolution",
+        "network unreachable",
+    ))
+
+
+def _smtp_send(msg):
+    cfg = current_app.config
+    msg["From"] = cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"]
+    with smtplib.SMTP(cfg["MAIL_SERVER"], cfg["MAIL_PORT"], timeout=20) as s:
+        s.starttls()
+        s.login(cfg["MAIL_USERNAME"], cfg["MAIL_PASSWORD"])
+        s.send_message(msg)
 
 
 def _gmail_error(exc):
@@ -108,16 +134,25 @@ def send(to, subject, body):
     try:
         if cfg["MAIL_BACKEND"] == "gmail_api":
             _gmail_send(msg)
+            used = "gmail_api"
         else:
-            msg["From"] = cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"]
-            with smtplib.SMTP(cfg["MAIL_SERVER"], cfg["MAIL_PORT"], timeout=20) as s:
-                s.starttls()
-                s.login(cfg["MAIL_USERNAME"], cfg["MAIL_PASSWORD"])
-                s.send_message(msg)
-        log.info("Mail sent to %s (%s): %r", to, cfg["MAIL_BACKEND"], subject)
+            try:
+                _smtp_send(msg)
+                used = "smtp"
+            except Exception as smtp_exc:
+                if _gmail_api_ready() and _is_network_error(smtp_exc):
+                    log.warning("SMTP unreachable (%s); falling back to Gmail API", smtp_exc)
+                    _gmail_send(msg)
+                    used = "gmail_api"
+                else:
+                    raise
+        log.info("Mail sent to %s (%s): %r", to, used, subject)
         return True, None
     except Exception as extra:
         err = _gmail_error(extra)
+        if _is_network_error(extra) and cfg["MAIL_BACKEND"] == "smtp":
+            err = (f"{err}. This host cannot reach {cfg['MAIL_SERVER']} "
+                   "(Render blocks Gmail SMTP). Set MAIL_BACKEND=gmail_api.")
         log.warning("Mail send failed to %s via %s: %s", to, cfg["MAIL_BACKEND"], extra)
         return False, err
 
