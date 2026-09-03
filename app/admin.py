@@ -207,9 +207,11 @@ def applicant_detail(public_id):
             if not (a.role.test_questions and a.role.test_questions.strip()):
                 flash("This role has no test defined — add one in the role form first.", "error")
             else:
-                sent, url = pipeline.resend_test(a)
-                flash(f"Test email sent to {a.email}." if sent
-                      else f"Email failed — send the link manually: {url}", "ok" if sent else "error")
+                sent, url, err = pipeline.resend_test(a)
+                if sent:
+                    flash(f"Test email sent to {a.email}.", "ok")
+                else:
+                    flash(f"Email failed: {err}. Send this link manually: {url}", "error")
             return redirect(url_for("admin.applicant_detail", public_id=public_id))
         elif action == "process":
             from . import pipeline

@@ -54,7 +54,7 @@ def decide_status(applicant, cfg):
 
 
 def send_test(a):
-    """Email the candidate their unique online test link. Returns (sent, url)."""
+    """Email the candidate their unique online test link. Returns (sent, url, err)."""
     if not a.test_token:
         a.test_token = secrets.token_urlsafe(24)
     test_url = f"{current_app.config['PUBLIC_BASE_URL']}/test/{a.test_token}"
@@ -67,7 +67,7 @@ def send_test(a):
         log_event(a, "error",
                   f"Test email to {a.email} failed: {err} — send this link manually: {test_url}",
                   actor="system")
-    return sent, test_url
+    return sent, test_url, err
 
 
 def _eligible_for_test(a, cfg):
@@ -117,7 +117,7 @@ def _run(app, applicant_id):
             if target and target != a.status:
                 test_note = ""
                 if target == "test_sent":
-                    sent, test_url = send_test(a)
+                    sent, test_url, _err = send_test(a)
                     if not sent:
                         target = "selected"  # candidate not notified -> don't claim the test was sent
                         test_note = f" (test link for manual sending: {test_url})"
@@ -130,7 +130,7 @@ def _run(app, applicant_id):
                 db.session.commit()
             elif _eligible_for_test(a, cfg):
                 # Re-apply / previous failed send: status is no longer "new" so decide_status skipped.
-                sent, test_url = send_test(a)
+                sent, test_url, _err = send_test(a)
                 if sent:
                     _promote_to_test_sent(a, "test email sent")
                     done.append("auto_status:test_sent")
@@ -225,7 +225,7 @@ def retry_unsent_tests():
     for a in rows:
         if not (a.role.test_questions and a.role.test_questions.strip()):
             continue
-        sent, url = send_test(a)
+        sent, url, _err = send_test(a)
         if sent:
             old = a.status
             a.status = "test_sent"
@@ -239,15 +239,15 @@ def retry_unsent_tests():
 
 
 def resend_test(applicant):
-    """Admin button: (re)send the test email now. Returns (sent, url)."""
-    sent, url = send_test(applicant)
+    """Admin button: (re)send the test email now. Returns (sent, url, err)."""
+    sent, url, err = send_test(applicant)
     if sent and applicant.status in ("new", "filtered", "selected"):
         old = applicant.status
         applicant.status = "test_sent"
         log_event(applicant, "status_changed", f"{old} -> test_sent (test sent from admin)", actor="admin")
         clickup.sync_status(applicant)
     db.session.commit()
-    return sent, url
+    return sent, url, err
 
 
 def _has_event(a, kind, message_prefix):

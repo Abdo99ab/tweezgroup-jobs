@@ -43,13 +43,27 @@ def status():
     return "ok", "log backend (development — mails are only logged)"
 
 
+def _gmail_error(exc):
+    """Prefer the Gmail API error body over the generic HttpError wrapper."""
+    content = getattr(exc, "content", None)
+    if content:
+        try:
+            import json
+            data = json.loads(content.decode() if isinstance(content, bytes) else content)
+            return data.get("error", {}).get("message") or str(exc)
+        except Exception:
+            pass
+    return str(exc)
+
+
 def _gmail_send(msg):
     """Send through the Gmail API with the same OAuth credentials used for Drive.
 
-    A new client is built per send (httplib2 is not thread-safe). From must be the
-    authorised Gmail account; MAIL_FROM is used as Reply-To when it differs.
+    gmail.send cannot call users.getProfile, so From is omitted and Gmail fills in
+    the authorised account. MAIL_FROM is Reply-To only.
     """
     import base64
+    from email import policy
 
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
@@ -58,23 +72,21 @@ def _gmail_send(msg):
     _prefer_google_auth()
 
     cfg = current_app.config
+    if "From" in msg:
+        del msg["From"]
+    reply = (cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"] or "").strip()
+    if reply:
+        if "Reply-To" in msg:
+            msg.replace_header("Reply-To", reply)
+        else:
+            msg["Reply-To"] = reply
+
     creds = Credentials(None, refresh_token=cfg["GOOGLE_OAUTH_REFRESH_TOKEN"],
                         client_id=cfg["GOOGLE_OAUTH_CLIENT_ID"], client_secret=cfg["GOOGLE_OAUTH_CLIENT_SECRET"],
                         token_uri="https://oauth2.googleapis.com/token")
+    raw = base64.urlsafe_b64encode(msg.as_bytes(policy=policy.SMTP)).decode()
     with _gmail_lock:
         service = build("gmail", "v1", credentials=creds, cache_discovery=False)
-        me = service.users().getProfile(userId="me").execute().get("emailAddress") or "me"
-        wanted = (cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"] or "").strip()
-        if "From" in msg:
-            msg.replace_header("From", me)
-        else:
-            msg["From"] = me
-        if wanted and wanted.lower() != me.lower():
-            if "Reply-To" in msg:
-                msg.replace_header("Reply-To", wanted)
-            else:
-                msg["Reply-To"] = wanted
-        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
         service.users().messages().send(userId="me", body={"raw": raw}).execute()
 
 
@@ -90,7 +102,6 @@ def send(to, subject, body):
         log.warning("%s; could not email %s", err, to)
         return False, err
     msg = EmailMessage()
-    msg["From"] = cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"] or "me"
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)
@@ -98,15 +109,16 @@ def send(to, subject, body):
         if cfg["MAIL_BACKEND"] == "gmail_api":
             _gmail_send(msg)
         else:
+            msg["From"] = cfg["MAIL_FROM"] or cfg["MAIL_USERNAME"]
             with smtplib.SMTP(cfg["MAIL_SERVER"], cfg["MAIL_PORT"], timeout=20) as s:
                 s.starttls()
                 s.login(cfg["MAIL_USERNAME"], cfg["MAIL_PASSWORD"])
                 s.send_message(msg)
         log.info("Mail sent to %s (%s): %r", to, cfg["MAIL_BACKEND"], subject)
         return True, None
-    except Exception as exc:
-        err = str(exc)
-        log.warning("Mail send failed to %s via %s: %s", to, cfg["MAIL_BACKEND"], exc)
+    except Exception as extra:
+        err = _gmail_error(extra)
+        log.warning("Mail send failed to %s via %s: %s", to, cfg["MAIL_BACKEND"], extra)
         return False, err
 
 
