@@ -22,6 +22,7 @@
       <dt>Consent</dt><dd>{{ a.consent_at.strftime('%d %b %Y') if a.consent_at else 'not recorded' }} · retained until {{ a.retention_until.strftime('%d %b %Y') if a.retention_until else '–' }}</dd>
       <dt>ClickUp</dt><dd>{% if a.clickup_task_url %}<a href="{{ a.clickup_task_url }}" target="_blank">{{ a.clickup_task_id }} ↗</a>{% else %}not synced{% endif %}</dd>
       <dt>CV</dt><dd>{% if a.cv_key %}<a href="{{ url_for('admin.applicant_cv', public_id=a.public_id) }}" target="_blank">{{ a.cv_filename }}</a> <span class="muted">({{ (a.cv_size/1024)|round|int }} KB)</span>{% if a.cv_url %} · <a href="{{ a.cv_url }}" target="_blank">open in Drive ↗</a>{% endif %}{% else %}no file yet{% endif %}</dd>
+      <dt>Portfolio</dt><dd>{% if a.portfolio_url %}<a href="{{ a.portfolio_url }}" target="_blank">{{ a.portfolio_filename }} ↗</a>{% elif a.portfolio_filename %}{{ a.portfolio_filename }}{% else %}–{% endif %}</dd>
       <dt>ID</dt><dd><code>{{ a.public_id }}</code></dd>
     </dl>
     {% if a.cover_note %}<h2>Cover note</h2><p>{{ a.cover_note }}</p>{% endif %}
@@ -41,6 +42,7 @@
       <dt>Sent</dt><dd>{{ a.test_sent_at.strftime('%d %b %Y %H:%M') if a.test_sent_at else '–' }}</dd>
       <dt>Submitted</dt><dd>{{ a.test_submitted_at.strftime('%d %b %Y %H:%M') if a.test_submitted_at else 'not yet' }}</dd>
       <dt>Test score</dt><dd><span class="score">{{ a.test_score if a.test_score is not none else '–' }}</span>{% if a.test_score is not none %}<span class="muted">/100</span>{% endif %}</dd>
+      <dt>Returned doc</dt><dd>{% if a.test_doc_url %}<a href="{{ a.test_doc_url }}" target="_blank">{{ a.test_doc_filename }} ↗</a>{% elif a.test_doc_filename %}{{ a.test_doc_filename }}{% else %}–{% endif %}</dd>
       {% if a.test_token %}<dt>Test link</dt><dd><code style="font-size:12px">{{ config.PUBLIC_BASE_URL }}/test/{{ a.test_token }}</code></dd>{% endif %}
     </dl>
     {% if a.test_evaluation %}<p style="white-space:pre-wrap;font-size:14px">{{ a.test_evaluation }}</p>{% endif %}

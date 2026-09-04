@@ -165,6 +165,8 @@ def format_test_result(applicant, data):
         lines += ["Weaknesses: " + "; ".join(data["weaknesses"])]
     if data.get("flags"):
         lines += ["Flags: " + "; ".join(data["flags"])]
+    if applicant.test_doc_url:
+        lines += ["", f"Returned document: {applicant.test_doc_url}"]
     if applicant.score is not None:
         lines += ["", f"(CV screening score was {applicant.score}/100)"]
     return "\n".join(l for l in lines if l is not None).strip()

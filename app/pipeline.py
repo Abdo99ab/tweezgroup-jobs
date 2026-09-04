@@ -136,10 +136,11 @@ def _run(app, applicant_id):
                     done.append("auto_status:test_sent")
                 db.session.commit()
 
-            # 3. ClickUp task (created with the decided status)
+            # 3. ClickUp task (created with the decided status; team added as watchers)
             if not a.clickup_task_id:
                 if clickup.create_task(a):
                     done.append("clickup_task")
+                    clickup.add_watchers(a)
                 db.session.commit()
             elif f"auto_status:{a.status}" in done:
                 clickup.sync_status(a)

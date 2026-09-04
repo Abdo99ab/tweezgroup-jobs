@@ -10,9 +10,11 @@
   <div style="white-space:pre-wrap">{{ role.test_questions }}</div>
 </div>
 <div class="card">
-<form method="post">
+<form method="post" enctype="multipart/form-data">
   <label for="answers">Your answers *</label>
   <textarea id="answers" name="answers" style="min-height:320px" placeholder="Answer each question, numbered like the questions above.">{{ answers }}</textarea>
+  <label for="document">Returned document <span class="muted" style="font-weight:400">(optional — attach your work as PDF, Word, Excel, ZIP or images, max 10 MB)</span></label>
+  <input type="file" id="document" name="document" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.png,.jpg,.jpeg,.webp">
   <p style="margin-top:20px"><button class="btn" type="submit" onclick="return confirm('Submit your answers? You can only submit once.')">Submit my answers</button></p>
 </form>
 </div>

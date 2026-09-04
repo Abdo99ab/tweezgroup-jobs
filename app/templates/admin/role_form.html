@@ -28,4 +28,14 @@
   <label class="check"><input type="checkbox" name="is_open" {% if not role or role.is_open %}checked{% endif %}> Active — visible to candidates and accepting applications</label>
   <p style="margin-top:20px"><button class="btn" type="submit">Save role</button></p>
 </form></div>
+{% if role %}
+<div class="card" style="margin-top:18px">
+  <h2 style="margin-top:0">Delete this job</h2>
+  <p class="muted">Removes it from the public site and the dashboard. {{ role.applicants.filter_by(deleted_at=None).count() }} applicant record(s) in the ATS will be deleted with it. Files already on Google Drive and ClickUp tasks are not removed. To hide it without deleting, uncheck Active above or use Pause on the dashboard.</p>
+  <form method="post" action="{{ url_for('admin.role_delete', role_id=role.id) }}"
+        onsubmit="return confirm({{ ('Delete “' ~ role.title ~ '”? This cannot be undone.')|tojson }});">
+    <button class="btn small danger" type="submit">Delete job</button>
+  </form>
+</div>
+{% endif %}
 {% endblock %}

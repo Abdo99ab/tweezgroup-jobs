@@ -60,8 +60,11 @@ class Config:
     API_KEY = os.environ.get("API_KEY", "dev-api-key")
 
     # --- uploads ---
-    MAX_CONTENT_LENGTH = int(os.environ.get("MAX_UPLOAD_MB", "10")) * 1024 * 1024
+    PER_FILE_MB = int(os.environ.get("MAX_UPLOAD_MB", "10"))                 # per attachment
+    MAX_CONTENT_LENGTH = PER_FILE_MB * 2 * 1024 * 1024 + 1024 * 1024          # request cap: two files + form
     ALLOWED_EXTENSIONS = {"pdf", "doc", "docx"}
+    ATTACHMENT_EXTENSIONS = {"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "zip",
+                             "png", "jpg", "jpeg", "webp"}  # portfolio / returned test document
 
     # --- storage: "gdrive" (TWEEZ-CV-BANK on Google Drive), "s3" (Supabase/Spaces/R2/AWS) or "local" ---
     STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "local")

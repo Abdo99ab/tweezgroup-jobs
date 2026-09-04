@@ -1,0 +1,32 @@
+{% extends "admin/base.html" %}
+{% block title %}Organize the CV bank{% endblock %}
+{% block content %}
+<h1>Organize file names</h1>
+<p class="muted">Preview of the renames that bring legacy files to the convention
+  <code>CODE + date - Candidate name.ext</code>. Nothing changes until you confirm; file contents and folders are never touched.</p>
+
+{% if renames %}
+<div class="card">
+  <table>
+    <thead><tr><th>Folder</th><th>Current name</th><th>Will become</th></tr></thead>
+    <tbody>
+    {% for r in renames %}
+      <tr>
+        <td class="muted">{{ r.folder }}</td>
+        <td>{{ r.old }}</td>
+        <td><strong>{{ r.new }}</strong>{% if r.error %}<br><span class="pill rejected">{{ r.error }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<form method="post" style="margin-top:14px" class="row" >
+  <input type="hidden" name="confirm" value="1">
+  <button class="btn" type="submit">Rename {{ renames|length }} file{{ '' if renames|length==1 else 's' }} on Drive</button>
+  <a class="btn small secondary" href="{{ url_for('admin.cv_bank') }}">Cancel</a>
+</form>
+{% else %}
+<div class="card" style="padding:22px"><p>Everything already follows the naming convention — nothing to rename. 🎉</p></div>
+<p style="margin-top:12px"><a class="btn small secondary" href="{{ url_for('admin.cv_bank') }}">Back to the CV bank</a></p>
+{% endif %}
+{% endblock %}

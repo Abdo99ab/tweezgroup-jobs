@@ -6,7 +6,7 @@
 <p class="muted" style="letter-spacing:.22em;text-transform:uppercase;font-size:12px;margin:14px 0 6px">We're hiring</p>
 <h1>{{ role.title }}</h1>
 <p class="muted" style="letter-spacing:.08em;text-transform:uppercase;font-size:12px">{{ [role.department, role.location, role.employment_type]|select|join(' · ') }}</p>
-{% if role.description %}<div class="card">{{ role.description|replace('\n','<br>')|safe }}</div>{% endif %}
+{% if role.description %}<div class="card">{{ role.description|jobdesc }}</div>{% endif %}
 
 <div class="card">
 <h2 style="margin-top:0">Your application</h2>
@@ -26,6 +26,8 @@
   <input type="number" id="years_experience" name="years_experience" min="0" max="60" step="1" required style="max-width:160px" value="{{ form.get('years_experience','') }}">
   <label for="cv">CV / Résumé * <span class="muted" style="font-weight:400">(PDF or Word, max 10 MB)</span></label>
   <input type="file" id="cv" name="cv" accept=".pdf,.doc,.docx" required>
+  <label for="portfolio">Portfolio / Projects <span class="muted" style="font-weight:400">(optional — PDF, Word, PowerPoint, ZIP or images, max 10 MB)</span></label>
+  <input type="file" id="portfolio" name="portfolio" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.png,.jpg,.jpeg,.webp">
   <label for="cover_note">Anything you'd like to add? <span class="muted" style="font-weight:400">(optional)</span></label>
   <textarea id="cover_note" name="cover_note">{{ form.get('cover_note','') }}</textarea>
   <label class="check"><input type="checkbox" name="consent" {% if form.get('consent')=='on' %}checked{% endif %}>

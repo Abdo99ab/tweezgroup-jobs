@@ -1,0 +1,68 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ folder.name }} — TweezCVBank{% endblock %}
+{% block content %}
+<p style="margin-bottom:6px"><a href="{{ url_for('admin.cv_bank') }}">TweezCVBank</a> <span class="muted">/</span> 📁 <strong>{{ folder.name }}</strong></p>
+<div class="row" style="justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px">
+  <div>
+    <h1 style="margin-bottom:2px"><span class="pill filtered" style="vertical-align:middle;margin-right:8px">{{ folder.code }}</span>{{ folder.name }}</h1>
+    <p class="muted" style="margin:0">{{ folder.count }} CV{{ '' if folder.count==1 else 's' }}{% if folder.subfolders %} + {{ folder.subfolders|length }} subfolder{{ '' if folder.subfolders|length==1 else 's' }}{% endif %}
+      · <a href="https://drive.google.com/drive/folders/{{ folder.id }}" target="_blank">open on Drive ↗</a></p>
+  </div>
+  <input id="folderSearch" type="search" placeholder="Filter inside this folder…" style="max-width:300px" autocomplete="off">
+</div>
+
+<div class="card" style="margin-top:14px">
+  <table>
+    <thead><tr><th>File</th><th>Received</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+    {% for f in folder.files %}
+      <tr class="bank-row" data-search="{{ f.name|lower }}">
+        <td>{{ f.name }} {% if not f.ok %}<span class="pill test_returned" title="Doesn't follow CODE+date - Name yet">legacy name</span>{% endif %}</td>
+        <td class="muted">{{ f.created }}</td>
+        <td class="muted">{{ fmt_size(f.size) }}</td>
+        <td><a class="btn small secondary" href="{{ f.link }}" target="_blank">Open CV ↗</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">No files directly in this folder.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% for sub in folder.subfolders %}
+<div class="card" style="margin-top:14px">
+  <div class="row" style="justify-content:space-between;align-items:center;padding:12px 18px 0">
+    <h2 style="margin:0;font-size:18px">📁 {{ folder.name }} <span class="muted">/</span> {{ sub.name }}</h2>
+    <span class="muted" style="font-size:13px">{{ sub.count }} file{{ '' if sub.count==1 else 's' }} ·
+      <a href="https://drive.google.com/drive/folders/{{ sub.id }}" target="_blank">open on Drive ↗</a></span>
+  </div>
+  <table>
+    <thead><tr><th>File</th><th>Received</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+    {% for f in sub.files %}
+      <tr class="bank-row" data-search="{{ (sub.name ~ ' ' ~ f.name)|lower }}">
+        <td>{{ f.name }}</td>
+        <td class="muted">{{ f.created }}</td>
+        <td class="muted">{{ fmt_size(f.size) }}</td>
+        <td><a class="btn small secondary" href="{{ f.link }}" target="_blank">Open ↗</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">Empty subfolder.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+<script>
+(function () {
+  var box = document.getElementById('folderSearch');
+  box.addEventListener('input', function () {
+    var q = box.value.trim().toLowerCase();
+    document.querySelectorAll('.bank-row').forEach(function (tr) {
+      tr.style.display = !q || tr.dataset.search.indexOf(q) !== -1 ? '' : 'none';
+    });
+  });
+})();
+</script>
+{% endblock %}

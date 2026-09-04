@@ -6,7 +6,7 @@ from functools import wraps
 from flask import (Blueprint, Response, abort, current_app, flash, redirect, render_template,
                    request, send_file, session, url_for)
 
-from . import clickup, mailer
+from . import clickup, cvbank, mailer
 from .models import STATUSES, STATUS_LABELS, Applicant, Role, db, log_event, slugify
 from .naming import code_for_title
 from .storage import get_storage
@@ -136,6 +136,23 @@ def role_toggle(role_id):
     return redirect(request.referrer or url_for("admin.dashboard"))
 
 
+@bp.post("/roles/<int:role_id>/delete")
+@login_required
+def role_delete(role_id):
+    """Remove a job from the site and ATS. Drive files and ClickUp tasks are left in place."""
+    role = Role.query.get_or_404(role_id)
+    title = role.title
+    applicants = role.applicants.all()
+    n = sum(1 for a in applicants if not a.deleted_at)
+    for a in applicants:
+        db.session.delete(a)
+    db.session.delete(role)
+    db.session.commit()
+    extra = f" and {n} applicant record{'s' if n != 1 else ''}" if n else ""
+    flash(f'Deleted “{title}”{extra}. Files on Google Drive and ClickUp tasks were not removed.', "ok")
+    return redirect(url_for("admin.dashboard"))
+
+
 # ---------- applicants ----------
 
 @bp.get("/applicants")
@@ -240,3 +257,56 @@ def applicant_cv(public_id):
     data = get_storage().get(a.cv_key)
     return send_file(io.BytesIO(data), mimetype=a.cv_mime or "application/octet-stream",
                      as_attachment=False, download_name=a.cv_filename)
+
+
+# ---------- TweezCVBank ----------
+
+@bp.get("/cv-bank")
+@login_required
+def cv_bank():
+    index = cvbank.cached_index()
+    q = (request.args.get("q") or "").strip()
+    hits = cvbank.search(index, q) if (index and q) else None
+    return render_template("admin/cvbank.html", index=index, stats=cvbank.stats(index), q=q, hits=hits,
+                           fmt_size=cvbank.fmt_size, drive_live=cvbank._drive() is not None)
+
+
+@bp.get("/cv-bank/f/<folder_id>")
+@login_required
+def cv_bank_folder(folder_id):
+    index = cvbank.cached_index()
+    folder = cvbank.find_folder(index or {}, folder_id)
+    if not folder:
+        flash("That folder is not in the index yet — rescan the Drive.", "error")
+        return redirect(url_for("admin.cv_bank"))
+    return render_template("admin/cvbank_folder.html", folder=folder, index=index, fmt_size=cvbank.fmt_size)
+
+
+@bp.post("/cv-bank/refresh")
+@login_required
+def cv_bank_refresh():
+    try:
+        index = cvbank.scan()
+        flash(f"Scanned the CV bank: {index['total']} files in {len(index['folders'])} role folders.", "ok")
+    except Exception as exc:
+        flash(f"Scan failed: {exc}", "error")
+    return redirect(url_for("admin.cv_bank"))
+
+
+@bp.route("/cv-bank/organize", methods=["GET", "POST"])
+@login_required
+def cv_bank_organize():
+    apply = request.method == "POST" and request.form.get("confirm") == "1"
+    try:
+        result = cvbank.organize(apply=apply)
+    except Exception as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("admin.cv_bank"))
+    if apply:
+        flash(f"Renamed {result['applied']} file(s) to the naming convention.", "ok")
+        try:
+            cvbank.scan()
+        except Exception:
+            pass
+        return redirect(url_for("admin.cv_bank"))
+    return render_template("admin/cvbank_organize.html", renames=result["renames"])

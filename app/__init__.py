@@ -28,6 +28,10 @@ def create_app(config_object=Config):
     app.register_blueprint(api_bp, url_prefix="/api/v1")
     app.register_blueprint(webhooks_bp, url_prefix="/webhooks")
 
+    from .textfmt import description_html, has_sections
+    app.jinja_env.filters["jobdesc"] = description_html
+    app.jinja_env.tests["sectioned"] = has_sections
+
     @app.context_processor
     def inject_globals():
         return {"company": app.config["COMPANY_NAME"], "labels": STATUS_LABELS,
@@ -295,11 +299,12 @@ def register_cli(app):
 
 def purge_applicant(a, storage):
     """Hard-anonymise an applicant: remove file and personal data, keep an anonymous row for stats."""
-    if a.cv_key:
-        try:
-            storage.delete(a.cv_key)
-        except Exception:
-            pass
+    for key in (a.cv_key, a.portfolio_key, a.test_doc_key):
+        if key:
+            try:
+                storage.delete(key)
+            except Exception:
+                pass
     a.full_name = "[deleted]"
     a.email = f"deleted-{a.public_id}@invalid"
     a.phone = None
@@ -309,6 +314,12 @@ def purge_applicant(a, storage):
     a.cv_key = None
     a.cv_filename = None
     a.cv_text = None
+    a.portfolio_key = None
+    a.portfolio_url = None
+    a.portfolio_filename = None
+    a.test_doc_key = None
+    a.test_doc_url = None
+    a.test_doc_filename = None
     a.ai_summary = None
     a.notes = None
     a.deleted_at = utcnow()

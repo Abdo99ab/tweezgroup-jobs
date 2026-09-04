@@ -115,6 +115,23 @@
 
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
   @media (max-width:640px){header.top .in{flex-direction:column;align-items:flex-start;gap:10px}.kv{grid-template-columns:120px 1fr}}
+  /* --- organized job descriptions --- */
+  .jd-intro p{margin:0 0 10px;max-width:68ch}
+  .jd-sec{margin:18px 0 0}
+  .jd-sec h3{font:600 19px/1.3 "Cormorant Garamond",Georgia,serif;color:var(--forest-2);margin:0 0 8px;
+             padding-bottom:6px;border-bottom:1px solid rgba(163,147,74,.35)}
+  .jd-sec ul{list-style:none;margin:0;padding:0}
+  .jd-sec li{position:relative;padding:3px 0 3px 20px;max-width:66ch}
+  .jd-sec li::before{content:"◆";position:absolute;left:2px;top:4px;font-size:9px;color:var(--gold-deep)}
+  .jd-sec p{margin:0 0 8px;max-width:68ch}
+  .jd.grid{display:block}
+  .jd.grid .jd-sections{display:grid;grid-template-columns:1fr 1fr;gap:0 26px}
+  details.jd-more{margin:6px 0 14px}
+  details.jd-more>summary{cursor:pointer;color:var(--forest-3);font-weight:600;list-style:none;display:inline-flex;align-items:center;gap:6px}
+  details.jd-more>summary::-webkit-details-marker{display:none}
+  details.jd-more>summary::after{content:"▾";color:var(--gold-deep);transition:transform .15s}
+  details.jd-more[open]>summary::after{transform:rotate(180deg)}
+  details.jd-more>summary:hover{text-decoration:underline;text-decoration-color:var(--gold-deep)}
 </style>
 </head>
 <body class="{{ 'embed' if embed }}">

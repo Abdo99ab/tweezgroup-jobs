@@ -1,0 +1,76 @@
+{% extends "admin/base.html" %}
+{% block title %}TweezCVBank{% endblock %}
+{% block content %}
+<div class="row" style="justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px">
+  <div>
+    <h1 style="margin-bottom:2px">TweezCVBank</h1>
+    <p class="muted" style="margin:0">One folder per position, exactly as on the Drive
+      {% if index %}· <a href="https://drive.google.com/drive/folders/{{ index.root }}" target="_blank">open TWEEZ-CV-BANK ↗</a>{% endif %}</p>
+  </div>
+  <div class="row" style="gap:8px">
+    <form method="post" action="{{ url_for('admin.cv_bank_refresh') }}">
+      <button class="btn small secondary" type="submit">Rescan Drive</button>
+    </form>
+    <a class="btn small" href="{{ url_for('admin.cv_bank_organize') }}">Organize names…</a>
+  </div>
+</div>
+
+{% if not index %}
+  <div class="card" style="margin-top:16px;padding:22px">
+    <p>No index yet — click <strong>Rescan Drive</strong> to read the CV bank.
+    {% if not drive_live %}<br><span class="muted">Google Drive is not configured in this environment; the page will show the last scan once one exists.</span>{% endif %}</p>
+  </div>
+{% else %}
+
+<div class="card" style="margin-top:14px;padding:12px 18px;display:flex;gap:26px;flex-wrap:wrap;align-items:center;font-size:14px">
+  <span><strong>{{ stats.total }}</strong> <span class="muted">files on the Drive</span></span>
+  <span><strong>{{ stats.folders }}</strong> <span class="muted">position folders</span></span>
+  <span>{% if stats.nonconforming %}<span class="pill test_returned">{{ stats.nonconforming }} legacy names</span>{% else %}<span class="pill hired">ALL NAMES OK</span>{% endif %}</span>
+  <span class="muted" style="margin-left:auto">Last scan: {{ stats.scanned_at }} UTC</span>
+</div>
+
+<form method="get" class="row" style="margin:14px 0 6px">
+  <input name="q" type="search" placeholder="Search the whole bank — candidate, file, position…"
+         value="{{ q }}" style="max-width:440px" autocomplete="off">
+  <button class="btn small secondary" type="submit">Search</button>
+  {% if q %}<a class="btn small secondary" href="{{ url_for('admin.cv_bank') }}">Clear</a>{% endif %}
+</form>
+
+{% if hits is not none %}
+  <div class="card">
+    <div style="padding:12px 18px 0"><h2 style="margin:0;font-size:18px">{{ hits|length }} result{{ '' if hits|length==1 else 's' }} for “{{ q }}”</h2></div>
+    <table>
+      <thead><tr><th>File</th><th>Position folder</th><th>Received</th><th></th></tr></thead>
+      <tbody>
+      {% for fo, sub, f in hits %}
+        <tr>
+          <td>{{ f.name }}</td>
+          <td><a href="{{ url_for('admin.cv_bank_folder', folder_id=fo.id) }}">📁 {{ fo.name }}</a>{% if sub %} <span class="muted">/ {{ sub }}</span>{% endif %}</td>
+          <td class="muted">{{ f.created }}</td>
+          <td><a class="btn small secondary" href="{{ f.link }}" target="_blank">Open ↗</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">Nothing matches.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+
+<div class="grid cols-4" style="margin-top:8px">
+  {% for fo in index.folders %}
+  <a class="stat" href="{{ url_for('admin.cv_bank_folder', folder_id=fo.id) }}" style="text-align:left">
+    <div style="font-size:26px">📁</div>
+    <div style="font-weight:600;margin:4px 0 6px;line-height:1.25">{{ fo.name }}</div>
+    <div class="l" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <span class="pill filtered">{{ fo.code }}</span>
+      <span class="muted">{{ fo.total if fo.total is defined else fo.count }} file{{ '' if (fo.total or fo.count)==1 else 's' }}</span>
+      {% if fo.subfolders %}<span class="muted">· {{ fo.subfolders|length }} subfolder{{ '' if fo.subfolders|length==1 else 's' }}</span>{% endif %}
+    </div>
+    {% if fo.last %}<div class="muted" style="font-size:12px;margin-top:6px">last CV {{ fo.last }}</div>{% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

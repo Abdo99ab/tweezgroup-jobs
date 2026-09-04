@@ -16,10 +16,10 @@
 </div>
 <h2>Roles</h2>
 <table><tr><th>Role</th><th>Code</th><th>Applicants</th><th>Visibility</th><th>Apply link</th><th></th></tr>
-{% for r in roles %}<tr>
+{% for r in roles %}{% set n = r.applicants.filter_by(deleted_at=None).count() %}<tr>
   <td><a href="{{ url_for('admin.applicants', role=r.slug) }}"><strong>{{ r.title }}</strong></a><br><span class="muted">{{ r.department or '' }}</span></td>
   <td><code>{{ r.code or '-' }}</code></td>
-  <td>{{ r.applicants.filter_by(deleted_at=None).count() }}</td>
+  <td>{{ n }}</td>
   <td class="row" style="gap:8px;flex-wrap:nowrap">
     {% if r.is_open %}<span class="pill hired">ACTIVE</span>{% else %}<span class="pill rejected">PAUSED</span>{% endif %}
     <form method="post" action="{{ url_for('admin.role_toggle', role_id=r.id) }}" style="display:inline">
@@ -31,7 +31,13 @@
   <td><code style="font-size:12px">{{ config.PUBLIC_BASE_URL }}/apply/{{ r.slug }}</code><br>
       <details><summary class="muted" style="font-size:12px;cursor:pointer">embed on a website</summary>
       <textarea readonly style="font-size:11px;min-height:60px" onclick="this.select()">&lt;iframe src="{{ config.PUBLIC_BASE_URL }}/apply/{{ r.slug }}?embed=1" style="width:100%;min-height:1150px;border:0" title="Apply — {{ r.title }}"&gt;&lt;/iframe&gt;</textarea></details></td>
-  <td><a class="btn small secondary" href="{{ url_for('admin.role_edit', role_id=r.id) }}">Edit</a></td>
+  <td class="row" style="gap:6px;flex-wrap:nowrap">
+    <a class="btn small secondary" href="{{ url_for('admin.role_edit', role_id=r.id) }}">Edit</a>
+    <form method="post" action="{{ url_for('admin.role_delete', role_id=r.id) }}"
+          onsubmit="return confirm({{ ('Delete “' ~ r.title ~ '”? It will disappear from the site' ~ (' and ' ~ n|string ~ ' applicant record(s) will be removed from the ATS' if n else '') ~ '. Files already on Google Drive and ClickUp tasks are kept.')|tojson }});">
+      <button class="btn small danger" type="submit">Delete</button>
+    </form>
+  </td>
 </tr>{% else %}<tr><td colspan="6">No roles yet — <a href="{{ url_for('admin.role_new') }}">create one</a>.</td></tr>{% endfor %}
 </table>
 <h2>Latest applications</h2>

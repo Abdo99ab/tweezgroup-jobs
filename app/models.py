@@ -119,6 +119,10 @@ class Applicant(db.Model):
     cv_size = db.Column(db.Integer)
     cv_text = db.Column(db.Text)             # extracted text for the agent
 
+    portfolio_key = db.Column(db.String(400))     # optional Portfolio / Projects attachment
+    portfolio_url = db.Column(db.String(400))
+    portfolio_filename = db.Column(db.String(300))
+
     status = db.Column(db.String(30), default="new", nullable=False, index=True)
     score = db.Column(db.Integer)            # 0-100, set by the agent
     ai_summary = db.Column(db.Text)          # agent's screening summary
@@ -130,6 +134,9 @@ class Applicant(db.Model):
     test_sent_at = db.Column(db.DateTime)
     test_submitted_at = db.Column(db.DateTime)
     test_answers = db.Column(db.Text)
+    test_doc_key = db.Column(db.String(400))      # optional "returned document" uploaded with the test
+    test_doc_url = db.Column(db.String(400))
+    test_doc_filename = db.Column(db.String(300))
     test_score = db.Column(db.Integer)                   # 0-100, graded by Claude against the answer key
     test_evaluation = db.Column(db.Text)                 # per-question feedback
 
@@ -164,6 +171,8 @@ class Applicant(db.Model):
                 "url": self.cv_url,
                 "has_text": bool(self.cv_text),
             } if self.cv_key else None,
+            "portfolio": {"filename": self.portfolio_filename, "url": self.portfolio_url}
+            if self.portfolio_key else None,
             "status": self.status,
             "score": self.score,
             "ai_summary": self.ai_summary,
@@ -174,6 +183,8 @@ class Applicant(db.Model):
                 "sent_at": self.test_sent_at.isoformat() + "Z" if self.test_sent_at else None,
                 "submitted_at": self.test_submitted_at.isoformat() + "Z" if self.test_submitted_at else None,
                 "score": self.test_score,
+                "returned_document": {"filename": self.test_doc_filename, "url": self.test_doc_url}
+                if self.test_doc_key else None,
             } if self.test_sent_at else None,
             "consent_at": self.consent_at.isoformat() + "Z" if self.consent_at else None,
             "retention_until": self.retention_until.isoformat() + "Z" if self.retention_until else None,

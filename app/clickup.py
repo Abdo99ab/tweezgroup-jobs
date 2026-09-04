@@ -112,6 +112,7 @@ def _description(applicant):
         f"**Applied:** {applicant.created_at:%Y-%m-%d %H:%M} UTC",
         "",
         f"**CV (Google Drive):** {applicant.cv_url or '-'}",
+        f"**Portfolio / Projects:** {applicant.portfolio_url or '-'}",
         f"**Applicant record:** {admin_url}",
         f"Applicant ID: {applicant.public_id}",
     ]
@@ -157,6 +158,29 @@ def create_task(applicant, force=False):
     except Exception as exc:
         log.warning("ClickUp task creation failed: %s", exc)
         log_event(applicant, "error", f"ClickUp task creation failed: {exc}")
+        return None
+
+
+def add_watchers(applicant):
+    """Add the configured mentions (and the assignee) as followers/watchers of the task so
+    ClickUp notifies them of every change. Never raises."""
+    if not _enabled() or not applicant.clickup_task_id:
+        return None
+    ids = [uid for _, uid in mention_ids() if uid]
+    a_id = assignee_id()
+    if a_id and a_id not in ids:
+        ids.append(a_id)
+    if not ids:
+        return None
+    try:
+        r = requests.put(f"{API}/task/{applicant.clickup_task_id}",
+                         json={"followers": {"add": ids, "rem": []}}, headers=_headers(), timeout=15)
+        r.raise_for_status()
+        log_event(applicant, "clickup_synced", f"Watchers added: {len(ids)} member(s)")
+        return r.json()
+    except Exception as exc:
+        log.warning("ClickUp add watchers failed: %s", exc)
+        log_event(applicant, "error", f"ClickUp add watchers failed: {exc}")
         return None
 
 

@@ -86,13 +86,15 @@ def code_for_title(title):
     return (initials or "XX")[:4]
 
 
-def cv_filename(role, full_name, ext, when=None, tz="Europe/Paris"):
+def cv_filename(role, full_name, ext, when=None, tz="Europe/Paris", label=None):
+    """HM03092026 - Sara Benali.pdf — or with a label: HM03092026 - Sara Benali - Portfolio.pdf"""
     when = when or datetime.now(ZoneInfo(tz))
     if when.tzinfo is None:
         when = when.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo(tz))
     code = role.code or code_for_title(role.title)
     clean_name = re.sub(r"[^\w \-\.]", "", full_name, flags=re.U).strip() or "Candidate"
-    return f"{code}{when:%d%m%Y} - {clean_name}.{ext.lower()}"
+    suffix = f" - {label}" if label else ""
+    return f"{code}{when:%d%m%Y} - {clean_name}{suffix}.{ext.lower()}"
 
 
 def _score(role_norm, folder_norm):

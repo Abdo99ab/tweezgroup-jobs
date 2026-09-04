@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 client_secret.json
 client_secret*.json
+*.patch
+*update*.zip
