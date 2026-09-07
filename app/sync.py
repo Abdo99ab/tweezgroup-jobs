@@ -139,4 +139,21 @@ def start_background(app):
             except Exception as exc:
                 log.warning("ClickUp reconcile failed: %s", exc)
 
+    def _due_tests():
+        """Once a minute: send scheduled technical tests whose TEST_SEND_DELAY_MINUTES elapsed."""
+        time.sleep(10)
+        from . import pipeline
+        while True:
+            try:
+                with app.app_context():
+                    sent = pipeline.send_due_tests()
+                    if sent:
+                        log.info("Scheduled tests: %s", "; ".join(sent))
+                    db.session.remove()
+            except Exception as exc:
+                log.warning("Scheduled test sender failed: %s", exc)
+            time.sleep(60)
+
     threading.Thread(target=_boot, daemon=True).start()
+    if app.config["TEST_SEND_DELAY_MINUTES"] > 0:
+        threading.Thread(target=_due_tests, daemon=True).start()

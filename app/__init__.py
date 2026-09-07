@@ -276,7 +276,10 @@ def register_cli(app):
     @app.cli.command("process-pending")
     def process_pending():
         """Retry anything missing: summary, status, ClickUp task/comments, unsent tests, ungraded tests."""
-        from .pipeline import pending_query, process_application, process_test_submission, retry_unsent_tests
+        from .pipeline import (pending_query, process_application, process_test_submission,
+                               retry_unsent_tests, send_due_tests)
+        for line in send_due_tests():
+            click.echo("  " + line)
         rows = pending_query().all()
         click.echo(f"{len(rows)} applicant(s) pending.")
         for a in rows:

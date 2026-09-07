@@ -41,12 +41,15 @@
 </tr>{% else %}<tr><td colspan="6">No roles yet — <a href="{{ url_for('admin.role_new') }}">create one</a>.</td></tr>{% endfor %}
 </table>
 <h2>Latest applications</h2>
-<table><tr><th>Applied</th><th>Candidate</th><th>Role</th><th>Status</th><th>Score</th></tr>
+{% set src_labels = {'linkedin':'LinkedIn','torre':'Torre','github':'GitHub','facebook':'Facebook','slack':'Slack','other':'Other','form':'Form','referral':'Referral','email':'Email'} %}
+<table><tr><th>Applied</th><th>Candidate</th><th>Source</th><th>Role</th><th>Status</th><th>CV score</th><th>Test score</th></tr>
 {% for a in recent %}<tr>
   <td class="muted">{{ a.created_at.strftime('%d %b %H:%M') }}</td>
   <td><a href="{{ url_for('admin.applicant_detail', public_id=a.public_id) }}">{{ a.full_name }}</a><br><span class="muted">{{ a.email }}</span></td>
+  <td>{{ src_labels.get(a.source, a.source|capitalize) if a.source else '–' }}</td>
   <td>{{ a.role.title }}</td><td><span class="pill {{ a.status }}">{{ labels[a.status] }}</span></td>
   <td class="score">{{ a.score if a.score is not none else '–' }}</td>
-</tr>{% else %}<tr><td colspan="5" class="muted">No applications yet.</td></tr>{% endfor %}
+  <td class="score">{{ a.test_score if a.test_score is not none else '–' }}</td>
+</tr>{% else %}<tr><td colspan="7" class="muted">No applications yet.</td></tr>{% endfor %}
 </table>
 {% endblock %}

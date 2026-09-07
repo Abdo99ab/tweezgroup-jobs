@@ -49,13 +49,15 @@ services:
       - key: CLICKUP_ASSIGNEE
         value: Mehdi Mahcene
       - key: CLICKUP_MENTIONS
-        value: Ahmidou, Taoufik Mousselmal, Abderrahmane Hammia
+        value: Abderrahmane Hammia
       - key: AUTO_STATUS_ENABLED
         value: "true"
       - key: REJECT_BELOW
         value: "50"
       - key: SELECT_ABOVE
         value: "60"
+      - key: TEST_SEND_DELAY_MINUTES
+        value: "27"
       - key: MAIL_BACKEND
         value: gmail_api
       - key: MAIL_USERNAME

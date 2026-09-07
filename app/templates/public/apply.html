@@ -11,7 +11,6 @@
 <div class="card">
 <h2 style="margin-top:0">Your application</h2>
 <form method="post" enctype="multipart/form-data">
-  <input type="hidden" name="source" value="{{ source }}">
   <label for="full_name">Full name *</label>
   <input type="text" id="full_name" name="full_name" required value="{{ form.get('full_name','') }}">
   <label for="email">Email *</label>
@@ -24,6 +23,15 @@
   <input type="text" id="location" name="location" placeholder="City, country" value="{{ form.get('location','') }}">
   <label for="years_experience">Years of experience in this field *</label>
   <input type="number" id="years_experience" name="years_experience" min="0" max="60" step="1" required style="max-width:160px" value="{{ form.get('years_experience','') }}">
+  <label for="source">Which platform did you apply from? *</label>
+  <select id="source" name="source" required style="max-width:280px">
+    <option value="" {{ 'selected' if not (form.get('source') or source in ('linkedin','torre','github','facebook','slack','other')) }} disabled>Choose a platform…</option>
+    {% set chosen = form.get('source') or source %}
+    {% for val, lab in [('linkedin','LinkedIn'), ('torre','Torre'), ('github','GitHub'),
+                        ('facebook','Facebook'), ('slack','Slack'), ('other','Other')] %}
+    <option value="{{ val }}" {{ 'selected' if chosen == val }}>{{ lab }}</option>
+    {% endfor %}
+  </select>
   <label for="cv">CV / Résumé * <span class="muted" style="font-weight:400">(PDF or Word, max 10 MB)</span></label>
   <input type="file" id="cv" name="cv" accept=".pdf,.doc,.docx" required>
   <label for="portfolio">Portfolio / Projects <span class="muted" style="font-weight:400">(optional — PDF, Word, PowerPoint, ZIP or images, max 10 MB)</span></label>

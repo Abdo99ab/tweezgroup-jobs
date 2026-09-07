@@ -73,6 +73,11 @@ def apply(slug):
         errors.append("Please tell us how many years of experience you have in this field (a whole number).")
     if form.get("consent") != "on":
         errors.append("You need to accept the privacy notice so we can process your application.")
+    # Platform the candidate applied from (required select on the form; legacy values kept for the API)
+    PLATFORMS = ("linkedin", "torre", "github", "facebook", "slack", "other")
+    source = form.get("source", "").strip().lower()
+    if source not in PLATFORMS + ("form", "referral", "email"):
+        errors.append("Please select which platform you applied from.")
 
     f = request.files.get("cv")
     if not f or not f.filename:
@@ -93,7 +98,6 @@ def apply(slug):
 
     data = f.read()
     filename = secure_filename(f.filename)
-    source = form.get("source") if form.get("source") in ("form", "linkedin", "referral", "email", "other") else "form"
 
     applicant = existing or Applicant(role=role)
     applicant.full_name = form["full_name"]

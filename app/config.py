@@ -100,7 +100,7 @@ class Config:
     CLICKUP_TEAM_ID = os.environ.get("CLICKUP_TEAM_ID", "9015802184")  # workspace id (from any ClickUp URL)
     # People, by ClickUp display name or email; resolved to user ids at runtime via GET /team
     CLICKUP_ASSIGNEE = os.environ.get("CLICKUP_ASSIGNEE", "Mehdi Mahcene")
-    CLICKUP_MENTIONS = os.environ.get("CLICKUP_MENTIONS", "Ahmidou, Taoufik Mousselmal, Abderrahmane Hammia")
+    CLICKUP_MENTIONS = os.environ.get("CLICKUP_MENTIONS", "Abderrahmane Hammia")
 
     # --- CV auto-summary (Claude) ---
     ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
@@ -114,6 +114,9 @@ class Config:
     REJECT_BELOW = int(os.environ.get("REJECT_BELOW", "50"))   # score <  50            -> rejected
     SELECT_ABOVE = int(os.environ.get("SELECT_ABOVE", "60"))   # 50 <= score <= 60      -> filtered
                                                                # score >  60            -> selected (or test_sent if the role has a test)
+    # Wait this long after selection before emailing the technical test (0 = send immediately).
+    # A human can reject the candidate on ClickUp during the window and the test is cancelled.
+    TEST_SEND_DELAY_MINUTES = int(os.environ.get("TEST_SEND_DELAY_MINUTES", "27"))
 
     # --- candidate email (test invitations) ---
     # Prefer Gmail API when Drive OAuth is present. Render (and many PaaS hosts) cannot

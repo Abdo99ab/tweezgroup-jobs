@@ -1,8 +1,9 @@
 """ClickUp sync: one task per applicant in the role's recruiting list.
 
 On creation the task is assigned to CLICKUP_ASSIGNEE (Mehdi Mahcene) and, once the CV auto-summary exists,
-a comment with the summary is posted tagging CLICKUP_MENTIONS (Ahmidou, Taoufik Mousselmal,
-Abderrahmane Hammia) for visibility. Status changes are pushed with the board's exact status names.
+a comment with the summary is posted tagging CLICKUP_MENTIONS (Abderrahmane Hammia) for visibility;
+the tagged people plus the assignee are also added as watchers. Status changes are pushed with the
+board's exact status names.
 """
 import logging
 import os

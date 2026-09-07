@@ -34,7 +34,7 @@ STATUS_LABELS = {
     "hired": "Hired",
 }
 
-SOURCES = ["form", "linkedin", "referral", "email", "other"]
+SOURCES = ["form", "linkedin", "torre", "github", "facebook", "slack", "referral", "email", "other"]
 
 
 def utcnow():
@@ -131,6 +131,7 @@ class Applicant(db.Model):
     clickup_task_url = db.Column(db.String(300))
 
     test_token = db.Column(db.String(48), unique=True)   # secret link for the candidate's online test
+    test_due_at = db.Column(db.DateTime)                 # scheduled send time (TEST_SEND_DELAY_MINUTES after selection)
     test_sent_at = db.Column(db.DateTime)
     test_submitted_at = db.Column(db.DateTime)
     test_answers = db.Column(db.Text)

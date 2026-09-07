@@ -5,8 +5,11 @@
        score <  REJECT_BELOW (50)          -> rejected
        REJECT_BELOW <= score <= SELECT_ABOVE (60) -> filtered   (FILTRED APPLICATION)
        score >  SELECT_ABOVE               -> selected  (SELECTED/ IN PROGRESS)
-         ... and if the role has a written test: the test is emailed to the candidate
-             (unique online link) and the status becomes test_sent (TEST SENT) instead.
+         ... and if the role has a written test: the test email is SCHEDULED
+             TEST_SEND_DELAY_MINUTES (default 27) after selection. When it is sent the
+             status becomes test_sent (TEST SENT). If a human rejects the candidate on
+             ClickUp during the window, the scheduled test is cancelled. Delay 0 = send
+             immediately, the old behaviour.
   3. ClickUp task is created in the role's list, assigned to Mehdi Mahcene, with that status
   4. The summary is posted as a comment tagging Ahmidou, Taoufik Mousselmal, Abderrahmane Hammia
 
@@ -20,6 +23,7 @@ anything that failed (e.g. ClickUp was down).
 import logging
 import secrets
 import threading
+from datetime import timedelta
 
 from flask import current_app
 
@@ -70,9 +74,19 @@ def send_test(a):
     return sent, test_url, err
 
 
+def schedule_test(a, cfg):
+    """Set the candidate's test send time TEST_SEND_DELAY_MINUTES from now."""
+    if not a.test_token:
+        a.test_token = secrets.token_urlsafe(24)
+    delay = cfg["TEST_SEND_DELAY_MINUTES"]
+    a.test_due_at = utcnow() + timedelta(minutes=delay)
+    log_event(a, "email_sent", f"Technical test scheduled: will be emailed to {a.email} "
+              f"at {a.test_due_at:%H:%M} UTC ({delay} min after selection)", actor="system")
+
+
 def _eligible_for_test(a, cfg):
-    """High score, role has a test, not yet emailed, not in a terminal status."""
-    if a.test_sent_at or a.score is None:
+    """High score, role has a test, not yet emailed or scheduled, not in a terminal status."""
+    if a.test_sent_at or a.test_due_at or a.score is None:
         return False
     if a.score <= cfg["SELECT_ABOVE"]:
         return False
@@ -117,10 +131,16 @@ def _run(app, applicant_id):
             if target and target != a.status:
                 test_note = ""
                 if target == "test_sent":
-                    sent, test_url, _err = send_test(a)
-                    if not sent:
-                        target = "selected"  # candidate not notified -> don't claim the test was sent
-                        test_note = f" (test link for manual sending: {test_url})"
+                    if cfg["TEST_SEND_DELAY_MINUTES"] > 0:
+                        schedule_test(a, cfg)     # selected now; the test email goes out after the delay
+                        target = "selected"
+                        test_note = f" (test scheduled for {a.test_due_at:%H:%M} UTC)"
+                        done.append("test_scheduled")
+                    else:
+                        sent, test_url, _err = send_test(a)
+                        if not sent:
+                            target = "selected"  # candidate not notified -> don't claim the test was sent
+                            test_note = f" (test link for manual sending: {test_url})"
                 old = a.status
                 a.status = target
                 log_event(a, "status_changed",
@@ -130,10 +150,14 @@ def _run(app, applicant_id):
                 db.session.commit()
             elif _eligible_for_test(a, cfg):
                 # Re-apply / previous failed send: status is no longer "new" so decide_status skipped.
-                sent, test_url, _err = send_test(a)
-                if sent:
-                    _promote_to_test_sent(a, "test email sent")
-                    done.append("auto_status:test_sent")
+                if cfg["TEST_SEND_DELAY_MINUTES"] > 0:
+                    schedule_test(a, cfg)
+                    done.append("test_scheduled")
+                else:
+                    sent, test_url, _err = send_test(a)
+                    if sent:
+                        _promote_to_test_sent(a, "test email sent")
+                        done.append("auto_status:test_sent")
                 db.session.commit()
 
             # 3. ClickUp task (created with the decided status; team added as watchers)
@@ -152,8 +176,9 @@ def _run(app, applicant_id):
                     done.append("clickup_comment")
                 db.session.commit()
 
-            # 5. manual-send note on the task if the test email failed
+            # 5. manual-send note on the task if the test email failed (not while one is scheduled)
             if a.clickup_task_id and a.status == "selected" and a.role.test_questions and not a.test_sent_at \
+                    and a.test_due_at is None \
                     and not _has_event(a, "clickup_synced", "Test link posted"):
                 url = f"{cfg['PUBLIC_BASE_URL']}/test/{a.test_token}" if a.test_token else None
                 if url and clickup.post_comment(a, f"Email is not configured — please send the candidate their test "
@@ -216,12 +241,48 @@ def _run_test(app, applicant_id):
         return done
 
 
+def send_due_tests():
+    """Send every scheduled test whose delay has elapsed. Runs from the background thread
+    (once a minute) and from `flask process-pending`. A candidate a human moved out of
+    SELECTED during the window (e.g. rejected on ClickUp) has the test cancelled instead.
+    The row is claimed atomically so multiple workers never double-send."""
+    out = []
+    now = utcnow()
+    rows = (Applicant.query.filter(Applicant.deleted_at.is_(None), Applicant.test_sent_at.is_(None),
+                                   Applicant.test_due_at.isnot(None), Applicant.test_due_at <= now)
+            .order_by(Applicant.test_due_at.asc()).limit(50).all())
+    for a in rows:
+        claimed = (Applicant.query.filter(Applicant.id == a.id, Applicant.test_sent_at.is_(None),
+                                          Applicant.test_due_at.isnot(None), Applicant.test_due_at <= now)
+                   .update({"test_due_at": None}, synchronize_session=False))
+        db.session.commit()
+        if not claimed:
+            continue  # another worker took it
+        db.session.refresh(a)
+        if a.status != "selected":
+            log_event(a, "note", f"Scheduled test cancelled: status is now {a.status} "
+                      "(changed during the waiting window)", actor="system")
+            out.append(f"{a.public_id} {a.full_name}: test cancelled (status {a.status})")
+            db.session.commit()
+            continue
+        sent, url, err = send_test(a)
+        if sent:
+            _promote_to_test_sent(a, "scheduled test email sent")
+            out.append(f"{a.public_id} {a.full_name}: scheduled test sent")
+        else:
+            a.test_due_at = utcnow() + timedelta(minutes=10)  # mail failed -> retry in 10 min
+            out.append(f"{a.public_id} {a.full_name}: mail failed, retrying in 10 min ({err})")
+        db.session.commit()
+    return out
+
+
 def retry_unsent_tests():
     """Applicants who qualified for a test but never got the email (mail was down/unconfigured):
-    try sending again and move them to test_sent on success."""
+    try sending again and move them to test_sent on success. Candidates with a test still
+    scheduled (test_due_at set) are left to send_due_tests."""
     out = []
     rows = (Applicant.query.filter(Applicant.deleted_at.is_(None), Applicant.status == "selected",
-                                   Applicant.test_sent_at.is_(None))
+                                   Applicant.test_sent_at.is_(None), Applicant.test_due_at.is_(None))
             .order_by(Applicant.created_at.asc()).limit(50).all())
     for a in rows:
         if not (a.role.test_questions and a.role.test_questions.strip()):
@@ -240,7 +301,8 @@ def retry_unsent_tests():
 
 
 def resend_test(applicant):
-    """Admin button: (re)send the test email now. Returns (sent, url, err)."""
+    """Admin button: (re)send the test email now (cancels any scheduled delay). Returns (sent, url, err)."""
+    applicant.test_due_at = None
     sent, url, err = send_test(applicant)
     if sent and applicant.status in ("new", "filtered", "selected"):
         old = applicant.status
