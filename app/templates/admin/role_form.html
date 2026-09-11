@@ -1,4 +1,5 @@
 {% extends "admin/base.html" %}
+{% from "admin/_regions.html" import region_chips %}
 {% block title %}{{ 'Edit role' if role else 'New role' }}{% endblock %}
 {% block mainclass %}narrow{% endblock %}
 {% block content %}
@@ -24,6 +25,22 @@
   <div class="hint">If filled: every applicant scoring above the selection threshold automatically receives this test by email (unique online link) and moves to TEST SENT. When they submit, Claude grades the answers against your key, the status moves to TEST RETURNED and the results are posted on the ClickUp task.</div>
   <label>Answer key (private — used by Claude to grade)</label>
   <textarea name="test_answer_key" style="min-height:140px" placeholder="Expected answers / grading guide, e.g. 'Q1 (30 pts): must mention X and Y…'. Never shown to candidates.">{{ role.test_answer_key or '' if role else '' }}</textarea>
+  <h2>Sourcing &amp; outreach (LinkedIn worker)</h2>
+  <div class="hint" style="margin-bottom:8px">Placeholders: <code>{first_name}</code> <code>{role}</code> <code>{company}</code> <code>{apply_url}</code> <code>{icebreaker}</code> (one personal line written by Claude from the profile) <code>{sender}</code> <code>{referred_by}</code>. Leave empty to use the built-in defaults.</div>
+  <label>Target regions (default for every search on this role)</label>
+  {{ region_chips('target_regions', regions.parse(role.target_regions) if role else ['france','algeria'], regions, 'target_custom', role.target_custom if role else '') }}
+  <div class="hint">Each region expands into one search per country (LinkedIn, GitHub) and into the countries listed on the Google for Jobs schema. "Remote — worldwide" runs without a location filter.</div>
+  <label>Search brief for Claude (optional)</label>
+  <textarea name="sourcing_brief" style="min-height:80px" placeholder="Title variants, must-have keywords, locations, languages… used by “Suggest searches”.">{{ role.sourcing_brief or '' if role else '' }}</textarea>
+  <label>Connection note (max 300 characters after rendering)</label>
+  <textarea name="msg_connection" style="min-height:70px" placeholder="{{ 'Hi {first_name}, I\'m hiring a {role} for {company}… Would love to connect.' }}">{{ role.msg_connection or '' if role else '' }}</textarea>
+  <label>Message with the apply link (sent once connected)</label>
+  <textarea name="msg_message" style="min-height:120px" placeholder="Must contain {apply_url}">{{ role.msg_message or '' if role else '' }}</textarea>
+  <label>Reminder (one, if the link is not opened)</label>
+  <textarea name="msg_reminder" style="min-height:80px">{{ role.msg_reminder or '' if role else '' }}</textarea>
+  <label>Referral email (sent to candidates referred by the team)</label>
+  <textarea name="msg_referral" style="min-height:80px">{{ role.msg_referral or '' if role else '' }}</textarea>
+  <label class="check"><input type="checkbox" name="sourcing_autosend" {% if role and role.sourcing_autosend %}checked{% endif %}> Auto-send — the worker sends without a human confirming each message (enable only after a clean pilot)</label>
   <label>ClickUp list ID (optional override)</label><input type="text" name="clickup_list_id" value="{{ role.clickup_list_id or '' if role else '' }}" placeholder="defaults to CLICKUP_LIST_ID">
   <label class="check"><input type="checkbox" name="is_open" {% if not role or role.is_open %}checked{% endif %}> Active — visible to candidates and accepting applications</label>
   <p style="margin-top:20px"><button class="btn" type="submit">Save role</button></p>

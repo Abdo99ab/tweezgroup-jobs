@@ -76,3 +76,13 @@ services:
         sync: false
       - key: RETENTION_MONTHS
         value: "12"
+      - key: SOURCING_SENDER_NAME
+        value: Mehdi
+      - key: SOURCING_CAP_CONNECTS
+        value: "20"
+      - key: SOURCING_CAP_MESSAGES
+        value: "40"
+      - key: SOURCING_HOURS
+        value: "09:00-18:00"
+      - key: GITHUB_TOKEN
+        sync: false

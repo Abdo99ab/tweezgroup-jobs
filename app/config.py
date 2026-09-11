@@ -138,3 +138,21 @@ class Config:
 
     # --- GDPR ---
     RETENTION_MONTHS = int(os.environ.get("RETENTION_MONTHS", "12"))
+
+    # --- Sourcing & outreach (Milestone 1) ---
+    # Daily caps for the LinkedIn worker (per calendar day, Europe/Paris). Week 1 after the first
+    # action runs at half these numbers (warm-up). The app enforces them; the worker only executes.
+    SOURCING_CAP_CONNECTS = int(os.environ.get("SOURCING_CAP_CONNECTS", "20"))
+    SOURCING_CAP_MESSAGES = int(os.environ.get("SOURCING_CAP_MESSAGES", "40"))
+    SOURCING_CAP_VIEWS = int(os.environ.get("SOURCING_CAP_VIEWS", "100"))
+    SOURCING_WARMUP_DAYS = int(os.environ.get("SOURCING_WARMUP_DAYS", "7"))
+    SOURCING_ACCEPT_WAIT_DAYS = int(os.environ.get("SOURCING_ACCEPT_WAIT_DAYS", "14"))   # give up if not accepted
+    SOURCING_REMINDER_DAYS = int(os.environ.get("SOURCING_REMINDER_DAYS", "4"))         # reminder if link not opened
+    SOURCING_PAUSE_HOURS = int(os.environ.get("SOURCING_PAUSE_HOURS", "48"))            # after a LinkedIn warning
+    SOURCING_HOURS = os.environ.get("SOURCING_HOURS", "09:00-18:00")                      # worker active window
+    SOURCING_TZ = os.environ.get("SOURCING_TZ", "Europe/Paris")
+    SOURCING_MIN_DELAY = int(os.environ.get("SOURCING_MIN_DELAY", "20"))                # seconds between actions
+    SOURCING_MAX_DELAY = int(os.environ.get("SOURCING_MAX_DELAY", "90"))
+    SOURCING_PRESCORE_ENABLED = _bool("SOURCING_PRESCORE_ENABLED", bool(os.environ.get("ANTHROPIC_API_KEY")))
+    SOURCING_SENDER_NAME = os.environ.get("SOURCING_SENDER_NAME", "")   # signature in messages, e.g. "Mehdi"
+    GITHUB_TOKEN = _env("GITHUB_TOKEN")   # optional personal token: raises the GitHub search API rate limit

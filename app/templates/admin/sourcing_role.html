@@ -1,0 +1,112 @@
+{% extends "admin/base.html" %}
+{% from "admin/_regions.html" import region_chips %}
+{% block title %}Sourcing — {{ role.title }}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('admin.sourcing_home') }}">&larr; Sourcing</a></p>
+<h1>{{ role.title }} <span class="muted" style="font-size:16px;font-family:Figtree">— sourcing</span></h1>
+<p class="muted">{{ 'Auto-send is ON for this role.' if role.sourcing_autosend else 'Human-confirm mode: every message waits for your Send.' }}
+  <a href="{{ url_for('admin.role_edit', role_id=role.id) }}">Edit templates</a>
+  {% if status.paused_until %}· <span class="pill rejected">WORKER PAUSED</span>{% endif %}</p>
+
+{% set tot = {} %}{% for s in stages %}{% set _ = tot.update({s: funnel.values()|map(attribute=s)|sum}) %}{% endfor %}
+<div class="grid cols-4">
+  {% for s in stages %}<div class="stat"><div class="n">{{ tot[s] }}</div><div class="l">{{ s.replace('_',' ') }}</div></div>{% endfor %}
+</div>
+
+<div class="row" style="margin:22px 0 10px">
+  {% for t, lab, n in [('shortlist','To review', shortlist|length), ('queue','Outreach queue', queue|length), ('contacted','All approved', contacted|length), ('searches','Searches', searches|length)] %}
+  <a class="btn small {{ 'secondary' if tab != t }}" href="{{ url_for('admin.sourcing_role', slug=role.slug, tab=t) }}">{{ lab }} ({{ n }})</a>
+  {% endfor %}
+</div>
+
+{% if tab == 'shortlist' %}
+<form method="post"><input type="hidden" name="action" value="decide"><input type="hidden" name="tab" value="shortlist">
+<div class="row" style="margin-bottom:10px">
+  <button class="btn small" name="decision" value="approve" type="submit">Approve selected</button>
+  <button class="btn small danger" name="decision" value="reject" type="submit">Reject selected</button>
+  <span class="muted" style="font-size:13px">Approving renders the messages from the role templates and queues the connection request.</span>
+</div>
+<table><tr><th><input type="checkbox" onclick="document.querySelectorAll('input[name=ids]').forEach(c=>c.checked=this.checked)"></th><th>Score</th><th>Profile</th><th>Headline</th><th>Location</th><th>Why</th></tr>
+{% for p in shortlist %}<tr>
+  <td><input type="checkbox" name="ids" value="{{ p.id }}"{% if p.pre_score and p.pre_score >= 70 %} checked{% endif %}></td>
+  <td class="score">{{ p.pre_score if p.pre_score is not none else '–' }}</td>
+  <td><a href="{{ url_for('admin.sourcing_profile', pid=p.id) }}"><strong>{{ p.full_name }}</strong></a><br><a href="{{ p.profile_url }}" target="_blank" class="muted" style="font-size:12px">{{ p.channel }} ↗</a></td>
+  <td style="max-width:320px">{{ p.headline or '' }}{% if p.company %}<br><span class="muted">{{ p.company }}</span>{% endif %}</td>
+  <td>{{ p.location or '' }}</td>
+  <td class="muted" style="font-size:13px;max-width:360px">{{ p.pre_reason or '' }}</td>
+</tr>{% else %}<tr><td colspan="6" class="muted">Nothing to review. Queue a search below (Searches tab) — the worker fills this list.</td></tr>{% endfor %}
+</table></form>
+
+{% elif tab == 'queue' %}
+<form method="post"><input type="hidden" name="action" value="decide"><input type="hidden" name="tab" value="queue">
+<div class="row" style="margin-bottom:10px">
+  <button class="btn small" name="decision" value="release" type="submit">Send selected</button>
+  <button class="btn small danger" name="decision" value="reject" type="submit">Stop selected</button>
+  <span class="muted" style="font-size:13px">"Send" confirms the next step; the worker executes it within caps during working hours ({{ status.hours }} {{ status.tz }}).</span>
+</div>
+<table><tr><th><input type="checkbox" onclick="document.querySelectorAll('input[name=ids]').forEach(c=>c.checked=this.checked)"></th><th>Candidate</th><th>Stage</th><th>Next step</th><th>Text to send</th><th>State</th></tr>
+{% for p in queue %}<tr>
+  <td>{% if not p.released and p.channel == 'linkedin' %}<input type="checkbox" name="ids" value="{{ p.id }}">{% endif %}</td>
+  <td><a href="{{ url_for('admin.sourcing_profile', pid=p.id) }}"><strong>{{ p.full_name }}</strong></a><br><span class="muted" style="font-size:12px">{{ channel_labels.get(p.channel, p.channel) }}{% if p.headline %} · {{ p.headline }}{% endif %}</span></td>
+  <td><span class="pill">{{ p.stage }}</span>{% if p.reply_class %}<br><span class="pill {{ 'filtered' if p.reply_class=='interested' else 'test_returned' }}">reply: {{ p.reply_class }}</span>{% endif %}</td>
+  <td><code>{{ p.next_action }}</code><br><span class="muted" style="font-size:12px">due {{ p.next_due_at.strftime('%d %b %H:%M') if p.next_due_at else 'now' }}</span></td>
+  <td style="max-width:420px;font-size:13px;white-space:pre-wrap">{% if p.next_action == 'connect' %}{{ p.draft_note }}{% elif p.next_action == 'message' %}{{ p.draft_message }}{% elif p.next_action == 'reminder' %}{{ p.draft_reminder }}{% else %}<span class="muted">(passive check: has the invitation been accepted?)</span>{% endif %}</td>
+  <td>{% if p.channel != 'linkedin' %}<span class="pill selected">MANUAL</span><br><span class="muted" style="font-size:12px">{% if p.email %}email or {% endif %}send on {{ channel_labels.get(p.channel, p.channel) }}, then mark it on the profile</span>{% elif p.released %}<span class="pill filtered">CONFIRMED</span><br><span class="muted" style="font-size:12px">waiting for worker</span>{% else %}<span class="pill test_returned">NEEDS SEND</span>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="6" class="muted">Queue is empty — approve profiles in "To review".</td></tr>{% endfor %}
+</table></form>
+
+{% elif tab == 'contacted' %}
+<table><tr><th>Candidate</th><th>Channel</th><th>Stage</th><th>Invite</th><th>Accepted</th><th>Link sent</th><th>Opened</th><th>Applied</th><th>Closed</th></tr>
+{% for p in contacted %}<tr>
+  <td><a href="{{ url_for('admin.sourcing_profile', pid=p.id) }}"><strong>{{ p.full_name }}</strong></a></td>
+  <td>{{ p.channel }}</td><td><span class="pill">{{ p.stage }}</span></td>
+  <td class="muted">{{ p.connect_sent_at.strftime('%d %b') if p.connect_sent_at else '' }}</td>
+  <td class="muted">{{ p.accepted_at.strftime('%d %b') if p.accepted_at else '' }}</td>
+  <td class="muted">{{ p.message_sent_at.strftime('%d %b') if p.message_sent_at else '' }}</td>
+  <td class="muted">{{ p.link_opened_at.strftime('%d %b') if p.link_opened_at else '' }}</td>
+  <td>{% if p.applicant %}<a href="{{ url_for('admin.applicant_detail', public_id=p.applicant.public_id) }}"><span class="pill {{ p.applicant.status }}">{{ labels[p.applicant.status] }}</span></a>{% endif %}</td>
+  <td class="muted">{{ p.close_reason or '' }}</td>
+</tr>{% else %}<tr><td colspan="9" class="muted">No approved profiles yet.</td></tr>{% endfor %}
+</table>
+
+{% else %}
+<div class="card"><form method="post"><input type="hidden" name="action" value="search"><input type="hidden" name="tab" value="searches">
+  <label>Search query (what to type in LinkedIn's people search)</label><input type="text" name="query" placeholder='"Head of Marketing" AND (ecommerce OR DTC) AND (Meta OR Google Ads)'>
+  <label>Where to look <span class="muted" style="font-weight:400">— one search per country; pre-selected from the role's target regions</span></label>
+  {{ region_chips('regions', role_regions, regions, 'custom', role.target_custom) }}
+  <label class="check" style="margin-top:10px"><input type="checkbox" name="with_cities"> Also search the main cities of each region (more searches, deeper coverage)</label>
+  <div class="grid cols-2">
+    <div><label>Max results per search</label><input type="number" name="max_results" value="50" min="5" max="200" style="max-width:120px"></div>
+    <div><label>Channel</label><select name="channel">{% for c in channels if channel_search[c] in ('worker','api') %}<option value="{{ c }}" {{ 'selected' if c=='linkedin' }}>{{ channel_labels[c] }}{{ ' (browser worker)' if channel_search[c]=='worker' else ' (API, runs now)' }}</option>{% endfor %}</select></div>
+  </div>
+  <div class="hint">GitHub queries use the official qualifiers, e.g. <code>language:python followers:>20 "data scientist" in:bio</code>.</div>
+  <p style="margin-top:14px" class="row"><button class="btn" type="submit">Queue search</button>
+    <button class="btn secondary" type="submit" name="action" value="suggest" formnovalidate>Suggest searches with Claude</button></p>
+</form></div>
+<div class="card"><form method="post"><input type="hidden" name="action" value="import"><input type="hidden" name="tab" value="searches">
+  <h2 style="margin-top:0">Import profile URLs</h2>
+  <p class="muted" style="margin-top:-6px">Behance, ArtStation, Kaggle, Contra, Torre, Upwork, Dribbble… have no people-search API: search on the platform, paste the profile links here (one per line). Each profile is enriched from its public page, pre-scored by Claude and gets a personal apply link. GitHub links are enriched through the API.</p>
+  <textarea name="urls" style="min-height:110px" placeholder="https://www.behance.net/sarabenali
+https://www.artstation.com/karim_m
+https://www.kaggle.com/ineshaddad
+https://contra.com/thomas_girard"></textarea>
+  <div class="row" style="margin-top:10px"><label style="margin:0">Channel</label>
+    <select name="channel" style="max-width:220px"><option value="auto">auto-detect from the URL</option>{% for c in channels %}<option value="{{ c }}">{{ channel_labels[c] }}</option>{% endfor %}</select>
+    <button class="btn" type="submit">Import</button></div>
+</form></div>
+<table><tr><th>Created</th><th>Channel</th><th>Query</th><th>Location</th><th>Status</th><th>Results</th><th></th></tr>
+{% for s in searches %}<tr>
+  <td class="muted">{{ s.created_at.strftime('%d %b %H:%M') }}</td>
+  <td>{{ channel_labels.get(s.channel, s.channel) }}</td>
+  <td><code>{{ s.keywords }}</code>{% if s.status == 'draft' and s.error %}<br><span class="muted" style="font-size:12px">{{ s.error }}</span>{% endif %}</td>
+  <td>{{ s.location or ('worldwide' if s.region == 'remote' else '') }}{% if s.region and s.region != 'remote' %}<br><span class="muted" style="font-size:12px">{{ regions.REGIONS[s.region].label }}</span>{% endif %}</td>
+  <td><span class="pill {{ {'pending':'test_sent','running':'selected','done':'filtered','error':'rejected','draft':'new'}[s.status] }}">{{ s.status }}</span>{% if s.status == 'error' %}<br><span class="muted" style="font-size:12px">{{ s.error }}</span>{% endif %}</td>
+  <td>{{ s.results_count }}</td>
+  <td><form method="post" class="row" style="gap:4px"><input type="hidden" name="action" value="search_state"><input type="hidden" name="tab" value="searches"><input type="hidden" name="search_id" value="{{ s.id }}">
+    {% if s.status == 'draft' %}<button class="btn small" name="state" value="pending">Activate</button>{% endif %}
+    {% if s.status in ('done','error') %}<button class="btn small secondary" name="state" value="pending">Run again</button>{% endif %}
+    <button class="btn small danger" name="state" value="delete">Delete</button></form></td>
+</tr>{% else %}<tr><td colspan="7" class="muted">No searches yet.</td></tr>{% endfor %}
+</table>
+{% endif %}
+{% endblock %}

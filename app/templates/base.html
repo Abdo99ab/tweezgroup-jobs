@@ -107,6 +107,13 @@
   .events li{font-size:13px;margin-bottom:5px;color:#414b3f}
   .score{font-weight:700;color:var(--forest)}
   details summary{cursor:pointer}
+  /* ---------- region chips ---------- */
+  .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
+  .chips label{display:inline-flex;align-items:center;gap:6px;margin:0;padding:6px 12px;border:1px solid #cfceba;border-radius:999px;background:#fff;font-size:13px;font-weight:500;cursor:pointer;user-select:none;transition:background .12s,border-color .12s}
+  .chips label:hover{border-color:var(--gold-deep)}
+  .chips input{appearance:none;width:0;height:0;margin:0;position:absolute;opacity:0}
+  .chips label:has(input:checked){background:var(--forest-2);border-color:var(--forest-2);color:var(--gold)}
+  .chips label.sep{border:0;background:transparent;padding:6px 2px;color:var(--muted);cursor:default;font-size:12px;letter-spacing:.06em;text-transform:uppercase}
 
   footer{background:var(--forest-2);border-top:3px solid var(--gold);margin-top:48px}
   footer .in{max-width:1100px;margin:0 auto;padding:22px 20px;color:#b9c5ae;font-size:13.5px;display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}

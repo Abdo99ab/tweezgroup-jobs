@@ -274,3 +274,215 @@ def stats():
             "unscored": base.filter(Applicant.score.is_(None)).count(),
         })
     return jsonify(roles=out, generated_at=utcnow().isoformat() + "Z")
+
+
+# ====================================================================================== sourcing (M1)
+# The browser worker (worker/) and the admin both drive sourcing through these endpoints.
+
+from .models import SourcedProfile, SourcingSearch  # noqa: E402
+from . import sourcing  # noqa: E402
+
+
+@bp.get("/sourcing/status")
+@require_key
+def sourcing_status():
+    """Worker heartbeat: paused?, caps left, active hours, how much work is waiting."""
+    return jsonify(sourcing.worker_status())
+
+
+@bp.post("/sourcing/pause")
+@require_key
+def sourcing_pause():
+    """Worker saw a LinkedIn warning/captcha (or a human wants a break): stop everything for a while."""
+    body = request.get_json(silent=True) or {}
+    until = sourcing.pause(body.get("hours"), body.get("reason") or "paused via API")
+    return jsonify(paused_until=until.isoformat() + "Z")
+
+
+@bp.post("/sourcing/resume")
+@require_key
+def sourcing_resume():
+    sourcing.resume()
+    return jsonify(ok=True)
+
+
+@bp.get("/sourcing/searches")
+@require_key
+def sourcing_searches():
+    """Searches for the worker to run (status=pending by default)."""
+    status = request.args.get("status", "pending")
+    channel = request.args.get("channel", "linkedin")
+    q = SourcingSearch.query.filter_by(channel=channel)
+    if status != "all":
+        q = q.filter_by(status=status)
+    rows = q.order_by(SourcingSearch.created_at.asc()).limit(20).all()
+    if status == "pending" and rows and not sourcing.paused_until():
+        for s in rows[:1]:
+            s.status = "running"
+            s.started_at = utcnow()
+        db.session.commit()
+        rows = rows[:1]
+    elif status == "pending" and sourcing.paused_until():
+        rows = []
+    return jsonify(searches=[s.to_dict() for s in rows])
+
+
+@bp.post("/sourcing/searches")
+@require_key
+def sourcing_search_create():
+    body = request.get_json(silent=True) or {}
+    r = Role.query.filter_by(slug=body.get("role")).first()
+    if not r or not body.get("query"):
+        abort(400, "role slug and query are required")
+    """{role, query, channel?, regions?: ["france","maghreb"], custom?: "Lyon, Oran", location?, with_cities?, max_results?}
+    One search is created per target location (regions expanded per channel)."""
+    created = sourcing.create_searches(
+        r, body["query"], channel=body.get("channel", "linkedin"),
+        region_keys=body.get("regions") or (body.get("region_keys") or []),
+        custom=body.get("custom") or body.get("location") or "", with_cities=bool(body.get("with_cities")),
+        max_results=int(body.get("max_results", 50)))
+    db.session.commit()
+    for s in created:
+        sourcing.start_search(s)   # GitHub etc. run immediately inside the app
+    return jsonify(searches=[s.to_dict() for s in created], search=created[0].to_dict()), 201
+
+
+@bp.get("/sourcing/regions")
+@require_key
+def sourcing_regions():
+    from . import regions
+    return jsonify(regions=[{"key": k, **regions.REGIONS[k]} for k in regions.ORDER])
+
+
+@bp.post("/sourcing/import")
+@require_key
+def sourcing_import():
+    """{role, urls: [...], channel?: auto|behance|artstation|kaggle|contra|github|…} — enrich + pre-score."""
+    body = request.get_json(silent=True) or {}
+    r = Role.query.filter_by(slug=body.get("role")).first()
+    urls = body.get("urls") or []
+    if not r or not urls:
+        abort(400, "role slug and a non-empty urls list are required")
+    s, n = sourcing.import_profiles(r, urls[:200], body.get("channel"))
+    return jsonify(search=s.to_dict(), new_profiles=n,
+                   profiles=[p.to_dict() for p in s.profiles.order_by(SourcedProfile.id).all()]), 201
+
+
+@bp.post("/sourcing/profiles/<int:pid>/email")
+@require_key
+def sourcing_email(pid):
+    p = db.session.get(SourcedProfile, pid) or abort(404)
+    ok, err = sourcing.email_link(p, actor="agent")
+    db.session.commit()
+    return jsonify(ok=ok, error=err, profile=p.to_dict())
+
+
+@bp.post("/sourcing/searches/<int:search_id>/results")
+@require_key
+def sourcing_search_results(search_id):
+    """Worker posts scraped profiles: [{profile_url, full_name, headline, location, company, about}].
+    New profiles are pre-scored by Claude in the background. done=true closes the search."""
+    s = db.session.get(SourcingSearch, search_id) or abort(404)
+    body = request.get_json(silent=True) or {}
+    n = sourcing.ingest_results(s, body.get("profiles") or [], done=bool(body.get("done")), error=body.get("error"))
+    return jsonify(search=s.to_dict(), new_profiles=n)
+
+
+@bp.get("/sourcing/profiles")
+@require_key
+def sourcing_profiles():
+    q = SourcedProfile.query
+    if request.args.get("role"):
+        r = Role.query.filter_by(slug=request.args["role"]).first_or_404()
+        q = q.filter_by(role_id=r.id)
+    if request.args.get("decision"):
+        q = q.filter_by(decision=request.args["decision"])
+    if request.args.get("channel"):
+        q = q.filter_by(channel=request.args["channel"])
+    limit = min(int(request.args.get("limit", 100)), 500)
+    rows = q.order_by(SourcedProfile.pre_score.desc().nullslast(), SourcedProfile.created_at.desc()).limit(limit).all()
+    return jsonify(profiles=[p.to_dict(include_drafts=request.args.get("include_drafts") == "1") for p in rows])
+
+
+@bp.post("/sourcing/profiles")
+@require_key
+def sourcing_profile_add():
+    """Add one candidate by hand or from an API channel (Torre, Apollo, GitHub, referral)."""
+    body = request.get_json(silent=True) or {}
+    r = Role.query.filter_by(slug=body.get("role")).first()
+    if not r or not body.get("full_name"):
+        abort(400, "role slug and full_name are required")
+    try:
+        p, sent = sourcing.add_manual(r, body["full_name"], profile_url=body.get("profile_url"), email=body.get("email"),
+                                     channel=body.get("channel", "manual"), referred_by=body.get("referred_by"),
+                                     headline=body.get("headline"), location=body.get("location"), actor="agent",
+                                     send_email=body.get("send_email", True))
+    except ValueError as exc:
+        abort(400, str(exc))
+    return jsonify(profile=p.to_dict(include_drafts=True), apply_url=sourcing.apply_url(p), email_sent=sent), 201
+
+
+@bp.patch("/sourcing/profiles/<int:pid>")
+@require_key
+def sourcing_profile_patch(pid):
+    """{decision: approved|rejected, released: bool, draft_note, draft_message, draft_reminder}"""
+    p = db.session.get(SourcedProfile, pid) or abort(404)
+    body = request.get_json(silent=True) or {}
+    actor = body.get("actor", "agent")
+    if body.get("decision") == "approved" and p.decision != "approved":
+        sourcing.approve(p, actor=actor)
+    elif body.get("decision") == "rejected":
+        sourcing.reject(p, actor=actor)
+    for f in ("draft_note", "draft_message", "draft_reminder"):
+        if f in body:
+            setattr(p, f, body[f])
+    if body.get("released") is True:
+        sourcing.release(p, actor=actor)
+    elif body.get("released") is False:
+        sourcing.hold(p, actor=actor)
+    db.session.commit()
+    return jsonify(profile=p.to_dict(include_drafts=True), apply_url=sourcing.apply_url(p))
+
+
+@bp.get("/sourcing/queue")
+@require_key
+def sourcing_queue():
+    """Actions the worker must perform now: [{profile_id, action, profile_url, text}]. Empty while paused
+    or when today's caps are used up. Items are locked for 2 h; report each with /outcome."""
+    limit = min(int(request.args.get("limit", 10)), 50)
+    return jsonify(actions=sourcing.next_queue(limit=limit, channel=request.args.get("channel", "linkedin")),
+                   status=sourcing.worker_status())
+
+
+@bp.post("/sourcing/profiles/<int:pid>/outcome")
+@require_key
+def sourcing_outcome(pid):
+    """{action, ok, detail, accepted (for check_accept), reply_text, warning}"""
+    p = db.session.get(SourcedProfile, pid) or abort(404)
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    if action not in sourcing.ACTIONS + ["view"]:
+        abort(400, f"action must be one of {sourcing.ACTIONS}")
+    sourcing.record_outcome(p, action, ok=bool(body.get("ok", True)), detail=body.get("detail"),
+                            accepted=body.get("accepted"), reply_text=body.get("reply_text"),
+                            warning=body.get("warning"))
+    db.session.commit()
+    return jsonify(profile=p.to_dict())
+
+
+@bp.post("/sourcing/inbox")
+@require_key
+def sourcing_inbox():
+    """Replies scraped from the inbox: {messages: [{profile_url, text, at}]} — only threads we started."""
+    body = request.get_json(silent=True) or {}
+    n = sourcing.ingest_inbox(body.get("messages") or [])
+    return jsonify(matched=n)
+
+
+@bp.get("/sourcing/funnel")
+@require_key
+def sourcing_funnel():
+    role = None
+    if request.args.get("role"):
+        role = Role.query.filter_by(slug=request.args["role"]).first_or_404()
+    return jsonify(funnel=sourcing.funnel(role))

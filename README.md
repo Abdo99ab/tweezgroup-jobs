@@ -90,6 +90,48 @@ Right after the candidate sees the confirmation page (background thread, ~5–15
 
 Each step is idempotent. `flask --app wsgi process-pending` (or `POST /api/v1/applicants/<id>/process`, or the "Re-run" button in the admin) retries whatever is missing.
 
+## Sourcing & outreach (Milestone 1)
+
+Candidates are never asked to email a CV: every outreach message carries a **personal apply link**
+`https://jobs.tweezgroup.com/r/<token>` that opens the role's form pre-filled (name, LinkedIn, platform) and attaches
+the upload to the sourced profile, after which the normal pipeline (score → Drive → ClickUp) takes over.
+
+- **`/admin/sourcing`** — per-role funnel (found → approved → contacted → accepted → link sent → opened → applied →
+  selected, per channel), worker status and today's caps, Pause/Resume, and a *Refer or add a candidate* form
+  (with an email the personal link is emailed at once; with only a LinkedIn URL the person joins the queue).
+- **`/admin/sourcing/<role>`** — *Searches* (type a LinkedIn query or let Claude suggest 3–5 from the role's
+  requirements), *To review* (scraped profiles pre-scored by Claude, batch approve/reject), *Outreach queue*
+  (each step shows the exact text; **Send** confirms it — human-confirm is the default, per-role *Auto-send*
+  exists), *All approved* (timeline per person).
+- **Target regions**: one-click chips (France, Algeria, Maghreb, Benelux, UK & Ireland, DACH, Eastern Europe,
+  Gulf, MENA, West Africa, USA & Canada, LatAm, South/SE Asia, China, Remote — worldwide…) on the role
+  (defaults) and on every search; each region expands into one search per country (plus main cities on
+  request), extra free-text locations can be added, Claude's pre-score penalises people outside the targets, and
+  the Google for Jobs schema lists the same countries. Presets live in `app/regions.py`; `GET /sourcing/regions`.
+- Message templates live on the role (`Edit role` → Sourcing & outreach): connection note (≤300 chars), message
+  with `{apply_url}`, reminder, referral email. `{icebreaker}` is one personal line Claude writes per profile.
+- The browser worker (`worker/`, Playwright) runs on a PC or a small VPS and only executes what the queue says —
+  see `worker/README.md` for setup, safety rails and LinkedIn-ToS notes.
+- Inbound channels: `JobPosting` JSON-LD on every apply page (Google for Jobs — submit `/sitemap.xml` in Search
+  Console), `/jobs/feed.xml` (Indeed XML feed — register it once in the employer account), and the apply form's
+  platform list now includes Indeed, Welcome to the Jungle, Google Jobs and other job boards.
+
+Worker API (`X-API-Key`): `GET /sourcing/status` · `POST /sourcing/pause|resume` · `GET /sourcing/searches` ·
+`POST /sourcing/searches` · `POST /sourcing/searches/<id>/results` · `GET|POST /sourcing/profiles` ·
+`PATCH /sourcing/profiles/<id>` (decision, released, drafts) · `GET /sourcing/queue` ·
+`POST /sourcing/profiles/<id>/outcome` · `POST /sourcing/inbox` · `GET /sourcing/funnel`.
+Other channels get the same link:
+- **GitHub** — official search API, run by the app itself (`channel=github` in *Searches*, query uses GitHub
+  qualifiers such as `language:python location:"Algeria" followers:>20`); optional `GITHUB_TOKEN` raises the
+  rate limit. Profiles carry bio, repos, followers and top languages for the pre-score.
+- **Behance, ArtStation, Kaggle, Contra** (also Torre, Upwork, Dribbble, Malt) — no people-search API, so the
+  recruiter searches on the platform and pastes profile URLs in *Searches → Import profile URLs*
+  (`POST /sourcing/import`). The app enriches each profile from its public page (Open Graph / JSON-LD / title),
+  pre-scores it with Claude and generates the personal link and message. Outreach on these platforms is manual:
+  copy the text from the profile page and mark *Link sent*, or click *Email the link* when an address is known
+  (`POST /sourcing/profiles/<id>/email`). They never enter the LinkedIn worker's queue.
+- Anything else via `POST /sourcing/profiles` with a `channel` (Apollo enrichment, referrals, hand-added).
+
 ## Run it locally (2 minutes)
 
 ```bash

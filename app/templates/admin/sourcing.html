@@ -1,0 +1,51 @@
+{% extends "admin/base.html" %}
+{% block title %}Sourcing — {{ company }} recruiting{% endblock %}
+{% block content %}
+<h1>Sourcing</h1>
+<div class="card" style="padding:14px 18px;display:flex;gap:22px;flex-wrap:wrap;align-items:center;font-size:14px">
+  <span><strong>Worker:</strong>
+    {% if status.paused_until %}<span class="pill rejected">PAUSED</span> <span class="muted">until {{ status.paused_until[:16].replace('T',' ') }} UTC — {{ status.paused_reason }}</span>
+    {% elif last %}<span class="pill filtered">ACTIVE</span> <span class="muted">last action {{ last.created_at.strftime('%d %b %H:%M') }} UTC ({{ last.action }})</span>
+    {% else %}<span class="pill test_returned">NO ACTIVITY YET</span> <span class="muted">start the worker (see worker/README.md)</span>{% endif %}
+  </span>
+  <span><strong>Today:</strong> <span class="muted">{{ status.caps.used.connect }}/{{ status.caps.limits.connect }} invites · {{ status.caps.used.message }}/{{ status.caps.limits.message }} messages · {{ status.caps.used.view }}/{{ status.caps.limits.view }} profile visits{% if status.caps.warmup %} · warm-up (half caps){% endif %}</span></span>
+  <span><strong>Waiting:</strong> <span class="muted">{{ status.pending_searches }} search(es) · {{ status.due_actions }} action(s) due</span></span>
+  <form method="post" action="{{ url_for('admin.sourcing_pause') }}" style="margin-left:auto">
+    {% if status.paused_until %}<input type="hidden" name="resume" value="1"><button class="btn small" type="submit">Resume</button>
+    {% else %}<button class="btn small danger" type="submit">Pause 48 h</button>{% endif %}
+  </form>
+</div>
+
+<h2>Roles</h2>
+<table><tr><th>Role</th><th>To review</th><th>Awaiting your Send</th><th>Found</th><th>Contacted</th><th>Accepted</th><th>Link sent</th><th>Opened</th><th>Applied</th><th>Selected</th><th></th></tr>
+{% for r in roles %}{% set d = per_role[r.id] %}<tr>
+  <td><a href="{{ url_for('admin.sourcing_role', slug=r.slug) }}"><strong>{{ r.title }}</strong></a><br>
+      <span class="muted">{{ 'auto-send' if r.sourcing_autosend else 'human confirm' }}{% if d.searches %} · {{ d.searches }} search(es) queued{% endif %}</span></td>
+  <td>{% if d.pending %}<a href="{{ url_for('admin.sourcing_role', slug=r.slug, tab='shortlist') }}"><strong>{{ d.pending }}</strong></a>{% else %}0{% endif %}</td>
+  <td>{% if d.waiting %}<a href="{{ url_for('admin.sourcing_role', slug=r.slug, tab='queue') }}"><strong>{{ d.waiting }}</strong></a>{% else %}0{% endif %}</td>
+  <td>{{ d.funnel.found }}</td><td>{{ d.funnel.contacted }}</td><td>{{ d.funnel.accepted }}</td><td>{{ d.funnel.link_sent }}</td>
+  <td>{{ d.funnel.link_opened }}</td><td>{{ d.funnel.applied }}</td><td class="score">{{ d.funnel.selected }}</td>
+  <td><a class="btn small secondary" href="{{ url_for('admin.sourcing_role', slug=r.slug) }}">Open</a></td>
+</tr>{% else %}<tr><td colspan="11">No roles yet.</td></tr>{% endfor %}
+</table>
+
+{% if funnel_all %}
+<h2>Funnel per channel (all roles)</h2>
+<table><tr><th>Channel</th>{% for s in stages %}<th>{{ s.replace('_',' ') }}</th>{% endfor %}</tr>
+{% for ch, f in funnel_all.items() %}<tr><td><strong>{{ ch }}</strong></td>{% for s in stages %}<td>{{ f[s] }}</td>{% endfor %}</tr>{% endfor %}
+</table>
+{% endif %}
+
+<h2>Refer or add a candidate</h2>
+<div class="card"><form method="post" action="{{ url_for('admin.sourcing_refer') }}">
+  <div class="grid cols-2">
+    <div><label>Role *</label><select name="role" required>{% for r in roles %}<option value="{{ r.slug }}">{{ r.title }}</option>{% endfor %}</select></div>
+    <div><label>Candidate's full name *</label><input type="text" name="full_name" required></div>
+    <div><label>Email</label><input type="email" name="email" placeholder="the personal link is emailed if filled"></div>
+    <div><label>LinkedIn URL</label><input type="url" name="profile_url" placeholder="https://www.linkedin.com/in/…"></div>
+    <div><label>Referred by (team member)</label><input type="text" name="referred_by" placeholder="leave empty if you found them yourself"></div>
+  </div>
+  <div class="hint">With an email: the candidate receives the referral email with their personal apply link. With only a LinkedIn URL: they join the outreach queue of that role.</div>
+  <p style="margin-top:14px"><button class="btn" type="submit">Add candidate</button></p>
+</form></div>
+{% endblock %}

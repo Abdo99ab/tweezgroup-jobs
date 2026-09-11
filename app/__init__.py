@@ -9,6 +9,7 @@ load_dotenv()
 
 from .config import Config  # noqa: E402
 from .models import db, Role, Applicant, utcnow, log_event, STATUS_LABELS  # noqa: E402
+from .models import SourcedProfile, SourcingSearch, SourcingAction  # noqa: E402  # register M1 tables
 
 
 def create_app(config_object=Config):

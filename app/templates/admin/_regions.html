@@ -1,0 +1,12 @@
+{% macro region_chips(name, selected, regions, custom_name=None, custom_value='') %}
+{% set groups = [('Core', ['france','algeria','morocco','tunisia','maghreb','remote']),
+                 ('Europe', ['benelux','spain_portugal','uk_ireland','dach','italy','europe_east','baltics_nordics','europe']),
+                 ('MENA & Africa', ['egypt','gulf','turkey','mena','west_africa']),
+                 ('Rest of world', ['north_america','latam','south_asia','southeast_asia','china'])] %}
+<div class="chips">
+{% for title, keys in groups %}<label class="sep">{{ title }}</label>{% for k in keys %}
+  <label title="{{ regions.REGIONS[k].countries|join(', ') or 'no location filter' }}"><input type="checkbox" name="{{ name }}" value="{{ k }}" {{ 'checked' if k in selected }}>{{ regions.REGIONS[k].label }}</label>{% endfor %}
+{% endfor %}
+</div>
+{% if custom_name %}<input type="text" name="{{ custom_name }}" value="{{ custom_value or '' }}" placeholder="Extra locations, comma-separated (e.g. Lyon, Oran, Dubai)" style="margin-top:8px">{% endif %}
+{% endmacro %}

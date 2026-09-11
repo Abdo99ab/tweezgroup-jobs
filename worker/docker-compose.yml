@@ -1,0 +1,11 @@
+# docker compose -f worker/docker-compose.yml up -d     (run from the repo root)
+services:
+  linkedin-worker:
+    build:
+      context: ..
+      dockerfile: worker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data          # persistent LinkedIn session (copy your PC's profile folder here after `login`)
+    shm_size: "1gb"

@@ -1,0 +1,59 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ p.full_name }} — sourcing{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('admin.sourcing_role', slug=p.role.slug) }}">&larr; {{ p.role.title }} sourcing</a></p>
+<h1>{{ p.full_name }}</h1>
+<p class="muted">{{ p.headline or '' }}{% if p.company %} · {{ p.company }}{% endif %}{% if p.location %} · {{ p.location }}{% endif %}</p>
+<div class="grid cols-2">
+<div class="card">
+  <dl class="kv">
+    <dt>Channel</dt><dd>{{ p.channel }} — <a href="{{ p.profile_url }}" target="_blank">{{ p.profile_url }}</a></dd>
+    {% if p.email %}<dt>Email</dt><dd>{{ p.email }}</dd>{% endif %}
+    {% if p.referred_by %}<dt>Referred by</dt><dd>{{ p.referred_by }}</dd>{% endif %}
+    <dt>Pre-score</dt><dd><span class="score">{{ p.pre_score if p.pre_score is not none else '–' }}</span> <span class="muted">{{ p.pre_reason or '' }}</span></dd>
+    <dt>Decision</dt><dd><span class="pill">{{ p.decision }}</span> · stage <span class="pill">{{ p.stage }}</span></dd>
+    <dt>Next step</dt><dd>{% if p.next_action %}<code>{{ p.next_action }}</code> {{ '— manual (this channel is not automated)' if p.channel != 'linkedin' else ('— CONFIRMED, waiting for worker' if p.released else '— needs your Send') }}{% if p.next_due_at %} (due {{ p.next_due_at.strftime('%d %b %H:%M') }} UTC){% endif %}{% else %}—{% endif %}</dd>
+    <dt>Personal link</dt><dd><code>{{ apply_url }}</code>{% if p.link_opened_at %}<br><span class="muted">opened {{ p.link_opened_at.strftime('%d %b %H:%M') }}</span>{% endif %}</dd>
+    {% if p.applicant %}<dt>Applied</dt><dd><a href="{{ url_for('admin.applicant_detail', public_id=p.applicant.public_id) }}">open application</a> · <span class="pill {{ p.applicant.status }}">{{ labels[p.applicant.status] }}</span></dd>{% endif %}
+    {% if p.closed_at %}<dt>Closed</dt><dd>{{ p.close_reason }} ({{ p.closed_at.strftime('%d %b') }})</dd>{% endif %}
+    {% if p.reply_text %}<dt>Reply</dt><dd><span class="pill">{{ p.reply_class }}</span><br><span style="white-space:pre-wrap">{{ p.reply_text }}</span></dd>{% endif %}
+  </dl>
+  <form method="post" class="row" style="margin-top:14px">
+    {% if p.decision != 'approved' %}<button class="btn small" name="action" value="approve">Approve</button>{% endif %}
+    {% if p.next_action and not p.released and p.channel == 'linkedin' %}<button class="btn small" name="action" value="release">Send ({{ p.next_action }})</button>{% endif %}
+    {% if p.decision == 'approved' and not p.closed_at and p.email %}<button class="btn small" name="action" value="email">Email the link{{ ' (reminder)' if p.message_sent_at }}</button>{% endif %}
+    {% if p.next_action and p.released %}<button class="btn small secondary" name="action" value="hold">Hold</button>{% endif %}
+    {% if p.decision != 'rejected' %}<button class="btn small danger" name="action" value="reject">Reject / stop</button>{% endif %}
+    {% if p.pre_score is none %}<button class="btn small secondary" name="action" value="prescore">Pre-score now</button>{% endif %}
+  </form>
+  {% if p.decision == 'approved' and not p.closed_at %}
+  {% if p.channel != 'linkedin' %}<div class="hint" style="margin-top:10px">This channel has no automation: copy the message on the right, send it on {{ p.channel }} (or use “Email the link”), then mark the step below.</div>{% endif %}
+  <form method="post" class="row" style="margin-top:10px"><input type="hidden" name="action" value="manual">
+    <span class="muted" style="font-size:13px">Did a step by hand?</span>
+    {% if not p.connect_sent_at %}<button class="btn small secondary" name="step" value="connect">Invite sent</button>{% endif %}
+    {% if p.connect_sent_at and not p.accepted_at %}<button class="btn small secondary" name="step" value="check_accept">Accepted</button>{% endif %}
+    {% if not p.message_sent_at %}<button class="btn small secondary" name="step" value="message">Link sent</button>{% endif %}
+    {% if p.message_sent_at and not p.reminder_sent_at %}<button class="btn small secondary" name="step" value="reminder">Reminder sent</button>{% endif %}
+  </form>
+  <form method="post" style="margin-top:10px"><input type="hidden" name="action" value="reply">
+    <label>Paste a reply from the candidate</label><textarea name="reply_text" style="min-height:60px"></textarea>
+    <button class="btn small secondary" type="submit" style="margin-top:6px">Save reply</button>
+  </form>
+  {% endif %}
+</div>
+<div class="card">
+  <h2 style="margin-top:0">Messages</h2>
+  <form method="post"><input type="hidden" name="action" value="save">
+    <label>Connection note <span class="muted" style="font-weight:400">(max 300)</span></label>
+    <textarea name="draft_note" maxlength="300" style="min-height:70px">{{ p.draft_note or '' }}</textarea>
+    <label>Message with link</label><textarea name="draft_message" style="min-height:150px">{{ p.draft_message or '' }}</textarea>
+    <label>Reminder</label><textarea name="draft_reminder" style="min-height:90px">{{ p.draft_reminder or '' }}</textarea>
+    <p class="row" style="margin-top:12px"><button class="btn small" type="submit">Save drafts</button>
+      <button class="btn small secondary" type="submit" name="action" value="regenerate">Regenerate from templates</button></p>
+  </form>
+  {% if p.icebreaker %}<div class="hint">Icebreaker Claude wrote: “{{ p.icebreaker }}”</div>{% endif %}
+</div>
+</div>
+<h2>Activity</h2>
+<ul class="events">{% for a in actions %}<li><span class="muted">{{ a.created_at.strftime('%d %b %H:%M') }}</span> · <strong>{{ a.action }}</strong> {{ 'ok' if a.ok else 'FAILED' }} · {{ a.actor }}{% if a.detail %} — {{ a.detail }}{% endif %}</li>{% else %}<li class="muted">No activity yet.</li>{% endfor %}</ul>
+{% endblock %}

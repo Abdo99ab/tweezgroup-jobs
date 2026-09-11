@@ -7,3 +7,6 @@ client_secret*.json
 *client_secret*.json
 *.patch
 *update*.zip
+worker/.env
+worker/linkedin-profile/
+worker/data/
