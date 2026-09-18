@@ -31,14 +31,19 @@ unacceptable, keep everything and only replace the send step with ProspectHalo.
 cd tweezgroup-jobs
 pip install -r worker/requirements.txt
 playwright install chromium
-cp worker/.env.example worker/.env      # set APP_URL and API_KEY (Render → Environment → API_KEY)
+cp worker/.env.example worker/.env
+# APP_URL must be the app you click Discover in (http://localhost:8000 locally,
+# or https://jobs.tweezgroup.com on Render) and API_KEY must match that app's .env
 python -m worker login                  # Chromium opens: log into the recruiting LinkedIn account, press Enter
 python -m worker check                  # API reachable? session valid?
 python -m worker run                    # keeps polling; Ctrl+C to stop
+# Discover then drives this same window: LinkedIn people search, then GitHub / GitLab / SO / HN / YC.
 ```
 
 Windows: Task Scheduler → *At log on* → `python -m worker run` in the repo folder, "Run only when user is logged
 on" (the browser needs a desktop). The worker idles outside working hours and while paused.
+
+**One worker, many roles.** `python -m worker run` is a single Chromium logged into one LinkedIn account. Discover on two roles at once is fine: each role has its own candidate list, and the worker plays their LinkedIn searches and public-site tabs back-to-back (round-robin). Do **not** start a second `worker run` on the same `LINKEDIN_PROFILE_DIR` — Playwright will fight over the profile. True parallel LinkedIn needs a second recruiting account, a second profile folder, and a second worker process.
 
 ## Run on a VPS (always on)
 

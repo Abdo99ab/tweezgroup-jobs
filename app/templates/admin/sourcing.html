@@ -17,16 +17,18 @@
 </div>
 
 <h2>Roles</h2>
-<table><tr><th>Role</th><th>To review</th><th>Awaiting your Send</th><th>Found</th><th>Contacted</th><th>Accepted</th><th>Link sent</th><th>Opened</th><th>Applied</th><th>Selected</th><th></th></tr>
+<table><tr><th>Role</th><th>Web results</th><th>To review</th><th>Awaiting your Send</th><th>Found</th><th>Contacted</th><th>Accepted</th><th>Link sent</th><th>Opened</th><th>Applied</th><th>Selected</th><th></th></tr>
 {% for r in roles %}{% set d = per_role[r.id] %}<tr>
   <td><a href="{{ url_for('admin.sourcing_role', slug=r.slug) }}"><strong>{{ r.title }}</strong></a><br>
       <span class="muted">{{ 'auto-send' if r.sourcing_autosend else 'human confirm' }}{% if d.searches %} · {{ d.searches }} search(es) queued{% endif %}</span></td>
+  <td>{% if d.web_total %}<a href="{{ url_for('admin.websourcing_role', slug=r.slug) }}"><strong>{{ d.web_total }}</strong></a>
+      <span class="muted" style="font-size:12px"><br>{{ d.web_new }} to review · {{ d.web_strong }} ≥70</span>{% else %}0{% endif %}</td>
   <td>{% if d.pending %}<a href="{{ url_for('admin.sourcing_role', slug=r.slug, tab='shortlist') }}"><strong>{{ d.pending }}</strong></a>{% else %}0{% endif %}</td>
   <td>{% if d.waiting %}<a href="{{ url_for('admin.sourcing_role', slug=r.slug, tab='queue') }}"><strong>{{ d.waiting }}</strong></a>{% else %}0{% endif %}</td>
   <td>{{ d.funnel.found }}</td><td>{{ d.funnel.contacted }}</td><td>{{ d.funnel.accepted }}</td><td>{{ d.funnel.link_sent }}</td>
   <td>{{ d.funnel.link_opened }}</td><td>{{ d.funnel.applied }}</td><td class="score">{{ d.funnel.selected }}</td>
   <td><a class="btn small secondary" href="{{ url_for('admin.sourcing_role', slug=r.slug) }}">Open</a></td>
-</tr>{% else %}<tr><td colspan="11">No roles yet.</td></tr>{% endfor %}
+</tr>{% else %}<tr><td colspan="12">No roles yet.</td></tr>{% endfor %}
 </table>
 
 {% if funnel_all %}

@@ -15,7 +15,7 @@
   POST   /api/v1/maintenance/purge-expired      GDPR retention purge (for hosts without cron)
 """
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 
 from flask import Blueprint, abort, current_app, jsonify, request, send_file
@@ -312,6 +312,15 @@ def sourcing_searches():
     """Searches for the worker to run (status=pending by default)."""
     status = request.args.get("status", "pending")
     channel = request.args.get("channel", "linkedin")
+    # Worker GET claims a row as "running". If it then dies (or only opens Messaging),
+    # the search is invisible forever. Put abandoned claims back in the queue.
+    if status == "pending":
+        stale = utcnow() - timedelta(minutes=3)
+        (SourcingSearch.query.filter_by(channel=channel, status="running", results_count=0)
+         .filter((SourcingSearch.started_at.is_(None)) | (SourcingSearch.started_at < stale))
+         .update({"status": "pending", "started_at": None, "error": None},
+                 synchronize_session=False))
+        db.session.commit()
     q = SourcingSearch.query.filter_by(channel=channel)
     if status != "all":
         q = q.filter_by(status=status)
@@ -486,3 +495,78 @@ def sourcing_funnel():
     if request.args.get("role"):
         role = Role.query.filter_by(slug=request.args["role"]).first_or_404()
     return jsonify(funnel=sourcing.funnel(role))
+
+
+# ---------- Web Sourcing (feeds for an external Claude browser session) ----------
+
+@bp.get("/websourcing/jobs")
+@require_key
+def websourcing_jobs():
+    """Chromium worker: next discovery run that still has public sources to visit in the browser."""
+    from . import websourcing
+    return jsonify(job=websourcing.claim_browser_job())
+
+
+@bp.post("/websourcing/jobs/<int:run_id>/results")
+@require_key
+def websourcing_job_results(run_id):
+    """Worker posts people scraped from one public source in Chromium."""
+    from . import websourcing
+    data = request.get_json(silent=True) or {}
+    n = websourcing.report_browser_source(
+        run_id, data.get("source") or "web", data.get("candidates") or [],
+        notes=data.get("notes") or [], done=bool(data.get("done", True)))
+    return jsonify(ok=True, stored=n)
+
+
+@bp.get("/websourcing/roles/<slug>/brief")
+@require_key
+def websourcing_brief(slug):
+    """Everything an external sourcing agent needs about a role: JD, requirements,
+    the recruiter's latest targeting filters, and the submission contract."""
+    from .websourcing import engine as ws
+    role = Role.query.filter_by(slug=slug).first_or_404()
+    criteria = ws._last_criteria(role)
+    return jsonify({
+        "role": {"slug": role.slug, "title": role.title, "department": role.department,
+                 "location": role.location, "description": role.description,
+                 "requirements": role.requirements, "sourcing_brief": role.sourcing_brief},
+        "targeting": criteria,
+        "suggested_sites": ws.BROWSER_SITES,   # LinkedIn-free site list for the worker job
+        "rules": [
+            "Public pages only — never log in, never bypass CAPTCHAs, rate limits or anti-bot protections.",
+            "Skip platforms that prohibit automated access (LinkedIn included).",
+            "Only professional information the person published themselves; email only if displayed.",
+            "Never invent or guess a value — omit it. Label every evidence claim Confirmed, Likely or Unknown.",
+            "Do not contact anyone — outreach happens in the app, on the recruiter's explicit click.",
+        ],
+        "submit": {
+            "url": "/api/v1/websourcing/candidates", "method": "POST",
+            "body": {"role": role.slug, "source": "claude-browser",
+                     "candidates": [{"full_name": "…", "headline": "…", "location": "…",
+                                     "company": "…", "email": "", "website": "", "profile_url": "…",
+                                     "skills": [], "languages": [],
+                                     "evidence": [{"claim": "…", "label": "Confirmed", "url": "…"}]}]},
+        },
+    })
+
+
+@bp.post("/websourcing/candidates")
+@require_key
+def websourcing_ingest():
+    """Accept discovered candidates from an external agent. The app normalizes, dedupes
+    against everything already found for the role, and scores with the evidence rules —
+    submissions never overwrite a recruiter's dismiss/move decisions."""
+    from . import websourcing
+    data = request.get_json(silent=True) or {}
+    role = Role.query.filter_by(slug=(data.get("role") or "")).first()
+    if role is None:
+        return jsonify(error="unknown role slug"), 404
+    cands = data.get("candidates")
+    if not isinstance(cands, list) or not cands:
+        return jsonify(error="candidates must be a non-empty list"), 400
+    source = (str(data.get("source") or "claude-browser")[:30]) or "claude-browser"
+    run, received, unique, stored = websourcing.ingest_external(role, cands, source=source)
+    return jsonify({"ok": True, "run_id": run.id, "received": received,
+                    "unique_after_dedupe": unique, "stored_and_scored": stored,
+                    "review_url": f"{current_app.config['PUBLIC_BASE_URL']}/admin/web-sourcing/{role.slug}"}), 201

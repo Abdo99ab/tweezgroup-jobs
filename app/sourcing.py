@@ -22,7 +22,7 @@ from flask import current_app
 
 from . import channels, mailer, regions
 from .models import (ACTIONS, CHANNEL_SEARCH, Applicant, Role, Setting, SourcedProfile, SourcingAction,
-                     SourcingSearch, db, log_event, utcnow)
+                     SourcingSearch, WebSourcingRun, db, log_event, utcnow)
 
 log = logging.getLogger(__name__)
 
@@ -260,6 +260,16 @@ def ingest_results(search, profiles, done=False, error=None):
         search.finished_at = utcnow()
     db.session.commit()
     ids = [r.id for r in new_ids]
+    if ids:
+        try:
+            from . import websourcing
+            websourcing.ingest_worker_profiles(role, [
+                {"profile_url": r.profile_url, "full_name": r.full_name, "headline": r.headline,
+                 "location": r.location, "company": r.company}
+                for r in new_ids
+            ], channel=search.channel or "linkedin")
+        except Exception:
+            log.exception("mirror to web sourcing failed")
     if ids and current_app.config["SOURCING_PRESCORE_ENABLED"]:
         app = current_app._get_current_object()
         if current_app.config.get("PROCESS_ASYNC", True) and not current_app.config.get("TESTING"):
@@ -496,6 +506,8 @@ def worker_status():
         "hours": cfg["SOURCING_HOURS"], "tz": cfg["SOURCING_TZ"],
         "min_delay": cfg["SOURCING_MIN_DELAY"], "max_delay": cfg["SOURCING_MAX_DELAY"],
         "pending_searches": SourcingSearch.query.filter_by(status="pending").count(),
+        "pending_web_jobs": WebSourcingRun.query.filter(
+            WebSourcingRun.status.in_(("pending", "running"))).count(),
         "due_actions": due_query().count(),
         "server_time": utcnow().isoformat() + "Z",
     }
@@ -745,3 +757,60 @@ def funnel(role=None):
             if p.applicant and p.applicant.status in SELECTED_STATUSES:
                 f["selected"] += 1
     return out
+
+
+# ------------------------------------------------------------------------------------ promote to ATS
+
+def promote_to_applicant(profile, actor="admin"):
+    """Recruiter picked this sourced candidate: create an Applicant with status FILTRED
+    APPLICATION so they appear on the Dashboard and in the Applicants section (and on
+    ClickUp, when configured) without waiting for them to apply through their link.
+
+    Returns (applicant, created). Never duplicates: an existing linked application or a
+    same-email application for the role is reused."""
+    from .models import SOURCES
+    if profile.applicant_id and profile.applicant:
+        return profile.applicant, False
+    email = (profile.email or "").strip().lower()
+    a = None
+    if email:
+        a = Applicant.query.filter_by(role_id=profile.role_id, email=email).filter(
+            Applicant.deleted_at.is_(None)).first()
+    if a is None:
+        a = Applicant(
+            role=profile.role,
+            full_name=profile.full_name,
+            # Applicant.email is required; sourced people often have none published yet —
+            # a clearly-fake placeholder keeps the record honest until they apply/reply.
+            email=email or f"no-email-sp{profile.id}@sourced.local",
+            linkedin_url=profile.profile_url if "linkedin.com" in (profile.profile_url or "") else None,
+            location=profile.location,
+            cover_note=(f"Added from sourcing ({profile.channel}). Profile: {profile.profile_url}\n"
+                        + (f"Headline: {profile.headline}\n" if profile.headline else "")
+                        + (f"Pre-score {profile.pre_score}: {profile.pre_reason}" if profile.pre_score else "")).strip(),
+            source=profile.channel if profile.channel in SOURCES else "other",
+            status="filtered",
+        )
+        a.set_retention(current_app.config["RETENTION_MONTHS"])
+        db.session.add(a)
+        db.session.flush()
+        log_event(a, "note", f"Added to applicants as FILTRED APPLICATION from sourcing by {actor} "
+                             f"(no CV yet — sourced profile {profile.profile_url})", actor=actor)
+        created = True
+    else:
+        created = False
+    profile.applicant_id = a.id
+    if profile.decision == "pending":
+        profile.decision = "approved"
+        profile.decided_at = utcnow()
+    _log(profile, "note", True, f"promoted to applicants ({'created' if created else 'linked existing'})",
+         actor=actor)
+    db.session.commit()
+    if created:
+        try:
+            from . import clickup
+            clickup.create_task(a)          # lands in FILTRED APPLICATION; never raises
+            db.session.commit()
+        except Exception:
+            log.exception("ClickUp task for promoted applicant %s failed", a.id)
+    return a, created

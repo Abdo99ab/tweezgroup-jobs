@@ -156,3 +156,27 @@ class Config:
     SOURCING_PRESCORE_ENABLED = _bool("SOURCING_PRESCORE_ENABLED", bool(os.environ.get("ANTHROPIC_API_KEY")))
     SOURCING_SENDER_NAME = os.environ.get("SOURCING_SENDER_NAME", "")   # signature in messages, e.g. "Mehdi"
     GITHUB_TOKEN = _env("GITHUB_TOKEN")   # optional personal token: raises the GitHub search API rate limit
+
+    # --- Public-web candidate sourcing (websourcing package) ---
+    # Free, public sources only. Every adapter uses official/public APIs or robots.txt-respecting
+    # GET requests with an identifying User-Agent; nothing logs in, nothing bypasses protections.
+    WEBSOURCING_ENABLED = _bool("WEBSOURCING_ENABLED", True)
+    WEBSOURCING_SOURCES = os.environ.get(
+        "WEBSOURCING_SOURCES",
+        "linkedin,github,gitlab,stackexchange,hackernews,boards,ycombinator,webpages")
+    WEBSOURCING_MAX_PER_SOURCE = int(os.environ.get("WEBSOURCING_MAX_PER_SOURCE", "25"))
+    WEBSOURCING_FETCH_DELAY = float(os.environ.get("WEBSOURCING_FETCH_DELAY", "2"))  # seconds between hits per domain
+    WEBSOURCING_BOT_UA = os.environ.get(
+        "WEBSOURCING_BOT_UA",
+        "TweezgroupSourcingBot/1.0 (+https://tweezgroup-jobs.onrender.com/jobs; recruiting contact: hr@tweezgroup.com)")
+    # Base URLs are configurable so the test suite can point every adapter at the mock server.
+    GITHUB_API_BASE = _env("GITHUB_API_BASE", "https://api.github.com")
+    GITLAB_API_BASE = _env("GITLAB_API_BASE", "https://gitlab.com/api/v4")
+    GITLAB_TOKEN = _env("GITLAB_TOKEN")            # optional: raises rate limits, still public data only
+    STACKEXCHANGE_API_BASE = _env("STACKEXCHANGE_API_BASE", "https://api.stackexchange.com/2.3")
+    STACKEXCHANGE_KEY = _env("STACKEXCHANGE_KEY")  # optional public app key: raises the quota
+    HN_API_BASE = _env("HN_API_BASE", "https://hn.algolia.com/api/v1")
+    YC_API_BASE = _env("YC_API_BASE", "https://yc-oss.github.io/api")  # community-maintained public YC dataset
+    GREENHOUSE_API_BASE = _env("GREENHOUSE_API_BASE", "https://boards-api.greenhouse.io/v1")
+    LEVER_API_BASE = _env("LEVER_API_BASE", "https://api.lever.co/v0")
+    ASHBY_API_BASE = _env("ASHBY_API_BASE", "https://api.ashbyhq.com/posting-api")

@@ -1,0 +1,107 @@
+{% extends "admin/base.html" %}
+{% block title %}Web Sourcing — {{ role.title }}{% endblock %}
+{% block content %}
+{% if last_run and last_run.status in ('pending', 'running') %}
+<script>setTimeout(function () { location.reload(); }, 8000);</script>
+{% endif %}
+<p><a href="{{ url_for('admin.websourcing_home') }}" class="muted">← Web Sourcing</a></p>
+<h1>{{ role.title }} — discovered candidates</h1>
+
+{% if last_run %}
+<div class="card" style="padding:12px 18px;font-size:14px;display:flex;gap:18px;flex-wrap:wrap;align-items:center">
+  <span><strong>Last run:</strong>
+    {% if last_run.status == 'done' %}<span class="pill hired">DONE</span>
+    {% elif last_run.status == 'error' %}<span class="pill rejected">ERROR</span>
+    {% elif last_run.status == 'stopped' %}<span class="pill rejected">STOPPED</span>
+    {% elif last_run.status == 'running' %}<span class="pill selected">RUNNING</span>
+    {% else %}<span class="pill test_returned">{{ last_run.status|upper }}</span>{% endif %}
+    {% if role_paused %}<span class="pill rejected">SOURCING PAUSED</span>{% endif %}
+    <span class="muted">{{ last_run.created_at.strftime('%d %b %H:%M') }} UTC · {{ last_run.sources }}</span></span>
+  {% set t = last_run.stats.get('_total') %}
+  {% if t %}<span class="muted">{{ t.found }} found · {{ t.unique }} unique after dedupe · {{ t.scored }} scored</span>{% endif %}
+  {% set p = last_run.stats.get('_progress') or {} %}
+  {% if p.phase %}<span class="muted">currently: {{ p.phase }}{% if p.source %} {{ p.source }}{% endif %}{% if p.source %} · {{ p.found or 0 }} found so far{% endif %}</span>{% endif %}
+  {% if last_run.criteria %}<span class="muted">targeting: {% for k, v in last_run.criteria.items() %}{{ k.replace('_', ' ') }} = {{ v }}{{ ' · ' if not loop.last }}{% endfor %}</span>{% endif %}
+  {% if last_run.status in ('pending', 'running') %}<span class="muted">this page refreshes automatically…</span>{% endif %}
+  <span class="row" style="gap:6px;flex-wrap:nowrap;margin-left:auto">
+  {% if last_run.status in ('pending', 'running') %}
+  <form method="post" action="{{ url_for('admin.websourcing_stop', slug=role.slug) }}">
+    <input type="hidden" name="next" value="{{ url_for('admin.websourcing_role', slug=role.slug) }}">
+    <button class="btn small danger" type="submit">Stop</button></form>
+  {% elif not role_paused %}
+  <form method="post" action="{{ url_for('admin.websourcing_run') }}">
+    <input type="hidden" name="role_id" value="{{ role.id }}">
+    {% for s in (last_run.sources or '').split(',') if s in adapters %}<input type="hidden" name="sources" value="{{ s }}">{% endfor %}
+    {% for k, v in last_run.criteria.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <input type="hidden" name="seed_urls" value="{{ last_run.seed_urls or '' }}">
+    <button class="btn small secondary" type="submit" title="Re-runs with the same sources, targeting filters and seed URLs">Run again</button>
+  </form>
+  {% endif %}
+  <form method="post" action="{{ url_for('admin.websourcing_pause', slug=role.slug) }}">
+    <input type="hidden" name="next" value="{{ url_for('admin.websourcing_role', slug=role.slug) }}">
+    <button class="btn small {{ '' if role_paused else 'danger' }}" type="submit"
+      title="{{ 'Allow sourcing runs for this role again' if role_paused else 'Stop active runs and block new ones for this role' }}">{{ 'Resume sourcing' if role_paused else 'Pause sourcing' }}</button></form>
+  <a class="btn small" href="{{ url_for('admin.websourcing_launch', slug=role.slug) }}"
+     title="Hand the browsing-heavy sourcing to a Claude session with a real browser">Launch in Claude</a>
+  </span>
+</div>
+{% if last_run.error %}<p class="flash error" style="margin-top:10px">{{ last_run.error }}</p>{% endif %}
+{% for name, s in last_run.stats.items() if name not in ('_total', '_progress') %}
+<p class="muted" style="font-size:13px;margin:4px 0">{{ adapters[name].label if name in adapters else name }}: {{ s.found }} found{% if s.notes %} — {{ s.notes|join(' · ') }}{% endif %}</p>
+{% endfor %}
+{% endif %}
+
+<form method="get" class="card row" style="padding:12px 18px;gap:10px;flex-wrap:wrap;align-items:flex-end;font-size:14px">
+  <label>Search<br><input name="q" value="{{ f.q }}" placeholder="name, headline, company" style="width:170px"></label>
+  <label>Min score<br><input name="min_score" type="number" min="0" max="100" value="{{ f.min_score or '' }}" style="width:80px"></label>
+  <label>Source<br><select name="source"><option value="">all</option>
+    {% for s in src_names %}<option value="{{ s }}" {{ 'selected' if f.source == s }}>{{ adapters[s].label if s in adapters else s }}</option>{% endfor %}</select></label>
+  <label>Location<br><input name="location" value="{{ f.location }}" placeholder="e.g. france" style="width:120px"></label>
+  <label>Skill<br><select name="skill"><option value="">all</option>
+    {% for s in skills %}<option value="{{ s }}" {{ 'selected' if f.skill == s }}>{{ s }}</option>{% endfor %}</select></label>
+  <label>Confidence<br><select name="confidence"><option value="">all</option>
+    {% for c in ('high','medium','low') %}<option value="{{ c }}" {{ 'selected' if f.confidence == c }}>{{ c }}</option>{% endfor %}</select></label>
+  <label>Status<br><select name="status"><option value="">all active</option>
+    {% for s in ('new','shortlisted','dismissed','moved') %}<option value="{{ s }}" {{ 'selected' if f.status == s }}>{{ s }}</option>{% endfor %}</select></label>
+  <button class="btn small" type="submit">Filter</button>
+  <a class="btn small secondary" href="{{ url_for('admin.websourcing_role', slug=role.slug) }}">Clear</a>
+</form>
+
+<table><tr><th>Score</th><th>Candidate</th><th>Matching criteria</th><th>Missing</th><th>Source(s)</th><th>Found</th><th></th></tr>
+{% for c in rows if c.status != 'dismissed' or f.status == 'dismissed' %}<tr>
+  <td><span class="score" style="font-size:17px;font-weight:700">{{ c.match_score if c.match_score is not none else '–' }}</span><br>
+      <span class="muted" style="font-size:12px">{{ c.confidence or '' }}</span></td>
+  <td style="max-width:230px"><a href="{{ url_for('admin.websourcing_candidate', cid=c.id) }}"><strong>{{ c.full_name }}</strong></a>
+      {% if c.status != 'new' %} <span class="pill {{ 'hired' if c.status=='shortlisted' else ('selected' if c.status=='moved' else 'rejected') }}">{{ c.status|upper }}</span>{% endif %}<br>
+      <span class="muted" style="font-size:13px">{{ (c.headline or '')[:90] }}{% if c.location %} · {{ c.location }}{% endif %}</span></td>
+  <td style="max-width:260px;font-size:13px">{% for m in c.matched[:3] %}✓ {{ m }}<br>{% endfor %}</td>
+  <td style="max-width:180px;font-size:13px" class="muted">{% for m in c.missing[:2] %}? {{ m }}<br>{% endfor %}</td>
+  <td style="font-size:13px">{% for s in c.sources %}<a href="{{ s.url }}" target="_blank" rel="noopener">{{ adapters[s.source].label if s.source in adapters else s.source }} ↗</a><br>{% endfor %}</td>
+  <td class="muted" style="font-size:12px">{{ c.discovered_at.strftime('%d %b') }}</td>
+  <td class="row" style="gap:6px;flex-wrap:nowrap">
+    {% if c.email and c.status != 'dismissed' and not c.emailed_at %}
+    <a class="btn small" href="{{ url_for('admin.websourcing_email', cid=c.id) }}" title="Draft a personalised email to {{ c.email }} — you review before anything is sent">✉ Email</a>
+    {% elif c.emailed_at %}<span class="pill test_returned" title="Emailed {{ c.emailed_at.strftime('%d %b %H:%M') }} UTC">✉ SENT</span>{% endif %}
+    <form method="post" action="{{ url_for('admin.websourcing_decide', cid=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}">
+      {% if c.status == 'new' %}<button class="btn small" name="action" value="shortlist">Shortlist</button>
+      {% elif c.status == 'shortlisted' %}<button class="btn small" name="action" value="outreach"
+        onclick="return confirm('Move {{ c.full_name }} to the outreach pipeline? A draft is prepared but nothing is sent without your click.')">To outreach</button>{% endif %}
+    </form>
+    {% if c.status in ('new','shortlisted') %}<form method="post" action="{{ url_for('admin.websourcing_decide', cid=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}">
+      <button class="btn small danger" name="action" value="dismiss">Dismiss</button></form>
+    {% elif c.status == 'dismissed' %}<form method="post" action="{{ url_for('admin.websourcing_decide', cid=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}">
+      <button class="btn small secondary" name="action" value="restore">Restore</button></form>{% endif %}
+  </td>
+</tr>{% else %}<tr><td colspan="7" class="muted">
+{% if last_run and last_run.status in ('pending', 'running') %}
+  Discovery is still running — names appear here as each source reports in.
+{% elif last_run and last_run.status == 'error' %}
+  This run stopped without candidates. {{ last_run.error or 'Start it again from the Web Sourcing page.' }}
+{% elif last_run %}
+  This run finished with no public matches. For LinkedIn, Chromium only opens if <code>python -m worker run</code> is going (after <code>python -m worker login</code>). GitHub/GitLab need network access; job boards need pasted URLs.
+{% else %}
+  Nothing yet — start a run from the <a href="{{ url_for('admin.websourcing_home') }}">Web Sourcing</a> page.
+{% endif %}
+</td></tr>{% endfor %}
+</table>
+{% endblock %}

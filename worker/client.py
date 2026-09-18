@@ -29,6 +29,14 @@ class Api:
     def pending_searches(self):
         return self._r("GET", "/sourcing/searches", params={"status": "pending"})["searches"]
 
+    def next_web_job(self):
+        return self._r("GET", "/websourcing/jobs").get("job")
+
+    def post_web_results(self, run_id, source, candidates, notes=None, done=True):
+        return self._r("POST", f"/websourcing/jobs/{run_id}/results",
+                       json={"source": source, "candidates": candidates or [],
+                             "notes": notes or [], "done": done})
+
     def post_results(self, search_id, profiles, done=False, error=None):
         return self._r("POST", f"/sourcing/searches/{search_id}/results",
                        json={"profiles": profiles, "done": done, "error": error})

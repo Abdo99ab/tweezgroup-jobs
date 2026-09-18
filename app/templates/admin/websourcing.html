@@ -1,0 +1,85 @@
+{% extends "admin/base.html" %}
+{% block title %}Web Sourcing — {{ company }} recruiting{% endblock %}
+{% block content %}
+<div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap">
+  <h1 style="margin-bottom:0">Web Sourcing</h1>
+  <a class="btn secondary" href="{{ url_for('admin.websourcing_workers') }}">Workers{% if active %} · {{ active }} active{% endif %} →</a>
+</div>
+<p class="muted" style="max-width:760px">
+<strong>Discover</strong> queues work for the headed Chromium worker (<code>python -m worker run</code>).
+The same window searches <strong>LinkedIn</strong>, then opens GitHub, GitLab, Stack Overflow, Hacker News and YC
+as a normal browser (so Flask’s blocked API calls are not used). Claude scores who fits. Nothing is messaged without your click.
+</p>
+
+<h2>Start a discovery run</h2>
+<div class="card" style="padding:16px 18px">
+<form method="post" action="{{ url_for('admin.websourcing_run') }}">
+  <div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end">
+    <label>Role<br>
+      <select name="role_id" required style="min-width:260px">
+        {% for r in roles %}<option value="{{ r.id }}">{{ r.title }}{{ '' if r.is_open else ' (paused)' }}</option>{% endfor %}
+      </select></label>
+    <div>
+      <span class="muted" style="font-size:13px">Sources</span><br>
+      {% for name, a in adapters.items() %}
+      <label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:14px">
+        <input type="checkbox" name="sources" value="{{ name }}" {{ 'checked' if name in enabled }}> {{ a.label }}</label>
+      {% endfor %}
+    </div>
+  </div>
+  <div style="margin-top:12px">
+    <span class="muted" style="font-size:13px">Targeting filters <span style="font-weight:400">(optional — they steer the search queries and the scoring; the job description fills whatever you leave empty)</span></span>
+    <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:6px">
+      <label>Location<br><input name="location" placeholder="e.g. Algeria / France / remote CET" style="width:190px"></label>
+      <label>Years of experience (min)<br><input name="min_years" type="number" min="0" max="40" placeholder="e.g. 5" style="width:80px"></label>
+      <label>Profile / role<br><input name="profile" placeholder="e.g. backend developer" style="width:190px"></label>
+      <label>Tools<br><input name="tools" placeholder="e.g. python, flask, docker" style="width:210px"></label>
+      <label>Language<br><input name="languages" placeholder="e.g. english, french" style="width:160px"></label>
+    </div>
+  </div>
+  <label style="display:block;margin-top:10px">Seed URLs <span class="muted">(optional — portfolios, company team pages,
+    public directory pages like Humetric, or Greenhouse/Lever/Ashby boards; one per line)</span><br>
+    <textarea name="seed_urls" rows="2" style="width:100%;max-width:760px" placeholder="https://example.dev&#10;https://boards.greenhouse.io/acme https://acme.com"></textarea></label>
+  <button class="btn" type="submit" style="margin-top:10px">Discover candidates</button>
+</form>
+</div>
+
+<h2>Roles</h2>
+<table><tr><th>Role</th><th>Discovered</th><th>To review</th><th>Score ≥ 70</th><th>Shortlisted</th><th></th></tr>
+{% for r in roles %}{% set d = per_role[r.id] %}<tr>
+  <td><a href="{{ url_for('admin.websourcing_role', slug=r.slug) }}"><strong>{{ r.title }}</strong></a>
+      {% if r.id in paused %} <span class="pill rejected">PAUSED</span>{% endif %}</td>
+  <td>{{ d.total }}</td>
+  <td>{% if d.new %}<strong>{{ d.new }}</strong>{% else %}0{% endif %}</td>
+  <td>{{ d.strong }}</td>
+  <td>{{ d.shortlisted }}</td>
+  <td class="row" style="gap:6px;flex-wrap:nowrap">
+    {% if r.id not in paused %}
+    <form method="post" action="{{ url_for('admin.websourcing_run') }}">
+      <input type="hidden" name="role_id" value="{{ r.id }}">
+      <button class="btn small" type="submit" title="Run all enabled public sources for this role now">Start sourcing</button></form>
+    {% endif %}
+    <a class="btn small secondary" href="{{ url_for('admin.websourcing_role', slug=r.slug) }}">Open</a>
+    <a class="btn small secondary" href="{{ url_for('admin.websourcing_launch', slug=r.slug) }}"
+       title="Hand the browsing-heavy sourcing to a Claude session with a real browser">Launch in Claude</a>
+  </td>
+</tr>{% endfor %}
+</table>
+
+<h2>Recent runs</h2>
+<table><tr><th>Started</th><th>Role</th><th>Sources</th><th>Status</th><th>Result</th></tr>
+{% for run in runs %}<tr>
+  <td class="muted">{{ run.created_at.strftime('%d %b %H:%M') }}</td>
+  <td><a href="{{ url_for('admin.websourcing_role', slug=run.role.slug) }}">{{ run.role.title }}</a></td>
+  <td class="muted" style="font-size:13px">{{ run.sources }}</td>
+  <td>{% if run.status == 'done' %}<span class="pill hired">DONE</span>
+      {% elif run.status == 'error' %}<span class="pill rejected">ERROR</span>
+      {% else %}<span class="pill test_returned">{{ run.status|upper }}</span>{% endif %}</td>
+  <td class="muted" style="font-size:13px">
+    {% set t = run.stats.get('_total') %}{% if t %}{{ t.found }} found · {{ t.unique }} unique · {{ t.scored }} scored{% elif run.error %}{{ run.error[:120] }}{% endif %}
+    {% if run.criteria %}<br>targeting: {% for k, v in run.criteria.items() %}{{ k.replace('_', ' ') }} = {{ v }}{{ ' · ' if not loop.last }}{% endfor %}{% endif %}
+    {% for name, s in run.stats.items() if name not in ('_total', '_progress') and s.notes %}<br>{{ name }}: {{ s.notes[0] }}{% endfor %}
+  </td>
+</tr>{% else %}<tr><td colspan="5" class="muted">No runs yet.</td></tr>{% endfor %}
+</table>
+{% endblock %}

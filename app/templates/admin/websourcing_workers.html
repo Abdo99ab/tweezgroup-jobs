@@ -1,0 +1,90 @@
+{% extends "admin/base.html" %}
+{% block title %}Sourcing workers — {{ company }} recruiting{% endblock %}
+{% block content %}
+{% if active %}<meta http-equiv="refresh" content="15">{% endif %}
+<p><a href="{{ url_for('admin.websourcing_home') }}" class="muted">← Web Sourcing</a></p>
+<h1>Sourcing workers — all roles</h1>
+<p class="muted" style="max-width:760px">Every sourcing job across every role in one place. Stop halts a run within seconds
+(candidates already scored stay in the list); Pause blocks new runs for a role until you resume.
+{% if active %}This page refreshes itself every 15 seconds while workers are active.{% endif %}</p>
+
+<h2>Web discovery runs</h2>
+<table><tr><th>Role</th><th>Status</th><th>Sources</th><th>Started</th><th>Progress</th><th></th></tr>
+{% for run in runs %}<tr>
+  <td><a href="{{ url_for('admin.websourcing_role', slug=run.role.slug) }}"><strong>{{ run.role.title }}</strong></a>
+      {% if run.role.id in paused %}<br><span class="pill rejected">SOURCING PAUSED</span>{% endif %}</td>
+  <td>{% if run.status == 'running' %}<span class="pill selected">RUNNING</span>
+      {% elif run.status == 'pending' %}<span class="pill test_returned">QUEUED</span>
+      {% elif run.status == 'stopping' %}<span class="pill test_returned">STOPPING…</span>
+      {% elif run.status == 'stopped' %}<span class="pill rejected">STOPPED</span>
+      {% elif run.status == 'error' %}<span class="pill rejected">ERROR</span>
+      {% else %}<span class="pill hired">DONE</span>{% endif %}</td>
+  <td class="muted" style="font-size:13px;max-width:220px;overflow-wrap:anywhere">{{ run.sources }}</td>
+  <td class="muted" style="font-size:13px">{{ run.created_at.strftime('%d %b %H:%M') }}
+      {% if run.finished_at %}<br>→ {{ run.finished_at.strftime('%H:%M') }}{% endif %}</td>
+  <td class="muted" style="font-size:13px">
+    {% set t = run.stats.get('_total') %}
+    {% if t %}{{ t.found }} found · {{ t.unique }} unique · {{ t.scored }} scored
+    {% else %}{% for name, s in run.stats.items() if name != '_total' %}{{ name }}: {{ s.found }} {% endfor %}{% endif %}
+    {% if run.error %}<br>{{ run.error[:100] }}{% endif %}</td>
+  <td class="row" style="gap:6px;flex-wrap:nowrap">
+    {% if run.status in ('running', 'pending') %}
+    <form method="post" action="{{ url_for('admin.websourcing_stop', slug=run.role.slug) }}">
+      <input type="hidden" name="next" value="{{ url_for('admin.websourcing_workers') }}">
+      <button class="btn small danger" type="submit">Stop</button></form>
+    {% endif %}
+  </td>
+</tr>{% else %}<tr><td colspan="6" class="muted">No runs yet.</td></tr>{% endfor %}
+</table>
+
+<h2>Per-role controls</h2>
+<table><tr><th>Role</th><th>Sourcing</th><th></th></tr>
+{% for r in roles %}<tr>
+  <td><strong>{{ r.title }}</strong></td>
+  <td>{% if r.id in paused %}<span class="pill rejected">PAUSED</span>{% else %}<span class="pill hired">ALLOWED</span>{% endif %}</td>
+  <td class="row" style="gap:6px;flex-wrap:nowrap">
+    {% if r.id not in paused %}
+    <form method="post" action="{{ url_for('admin.websourcing_run') }}">
+      <input type="hidden" name="role_id" value="{{ r.id }}">
+      <button class="btn small" type="submit" title="Run all enabled public sources now">Start sourcing</button></form>
+    {% endif %}
+    <form method="post" action="{{ url_for('admin.websourcing_pause', slug=r.slug) }}">
+      <input type="hidden" name="next" value="{{ url_for('admin.websourcing_workers') }}">
+      <button class="btn small {{ '' if r.id in paused else 'danger' }}" type="submit">{{ 'Resume' if r.id in paused else 'Pause' }}</button></form>
+    <form method="post" action="{{ url_for('admin.websourcing_stop', slug=r.slug) }}">
+      <input type="hidden" name="next" value="{{ url_for('admin.websourcing_workers') }}">
+      <button class="btn small secondary" type="submit">Stop runs</button></form>
+    <a class="btn small secondary" href="{{ url_for('admin.websourcing_launch', slug=r.slug) }}">Launch in Claude</a>
+  </td>
+</tr>{% endfor %}
+</table>
+
+<h2>LinkedIn browser worker</h2>
+<div class="card" style="padding:12px 18px;font-size:14px">
+  <p class="muted" style="margin-top:0;max-width:760px">Discover queues LinkedIn people searches here. Chromium only
+  opens when this worker is running on your PC: <code>python -m worker run</code> (after <code>python -m worker login</code>).
+  Claude scores each profile against the role.</p>
+  {% if worker.paused_until %}<span class="pill rejected">PAUSED</span> <span class="muted">until {{ worker.paused_until[:16].replace('T',' ') }} UTC</span>
+  {% else %}<span class="muted">{{ worker.pending_searches }} search(es) queued · {{ worker.due_actions }} action(s) due — also under <a href="{{ url_for('admin.sourcing_home') }}">Sourcing</a>.</span>{% endif %}
+  {% if m1 %}
+  <table style="margin-top:8px"><tr><th>Role</th><th>Channel</th><th>Search</th><th>Status</th></tr>
+  {% for s in m1 %}<tr><td>{{ s.role.title }}</td><td>{{ s.channel }}</td>
+    <td class="muted" style="font-size:13px">{{ s.keywords[:60] }}{% if s.location %} · {{ s.location }}{% endif %}</td>
+    <td><span class="pill {{ 'selected' if s.status == 'running' else 'test_returned' }}">{{ s.status|upper }}</span></td></tr>{% endfor %}
+  </table>{% endif %}
+</div>
+
+<h2>Websites covered</h2>
+<div class="grid cols-2" style="align-items:start">
+  <div class="card" style="padding:14px 18px">
+    <strong>LinkedIn + public sites (same Chromium)</strong> <span class="muted" style="font-size:13px">— all of these open in the worker browser</span>
+    <ul style="margin:8px 0 0">{% for name, urls in sites.items() %}
+      <li><strong>{{ adapters[name].label if name in adapters else name }}:</strong> <span class="muted">{{ urls|join(' · ') }}</span></li>{% endfor %}
+    </ul>
+  </div>
+  <div class="card" style="padding:14px 18px">
+    <strong>Claude browser worker</strong> <span class="muted" style="font-size:13px">— part of every Launch-in-Claude job</span>
+    <ul style="margin:8px 0 0">{% for s in browser_sites %}<li>{{ s }}</li>{% endfor %}</ul>
+  </div>
+</div>
+{% endblock %}

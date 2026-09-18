@@ -1,0 +1,29 @@
+{% extends "admin/base.html" %}
+{% block title %}Launch in Claude — {{ role.title }}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('admin.websourcing_role', slug=role.slug) }}" class="muted">← {{ role.title }} candidates</a></p>
+<h1>Launch a Claude browser session</h1>
+<p class="muted" style="max-width:760px">This hands the browsing-heavy part of sourcing to Claude on your computer: a Claude session
+with the <strong>Claude for Chrome</strong> extension (or a Cowork session linked to your computer) gets a real browser, reads this
+role's brief from the app, hunts public pages — portfolios, directories, team pages — and posts what it finds back here.
+Everything lands in the same review list, deduplicated and scored by the app; the same rules apply (public pages only, no logins,
+no LinkedIn scraping), and outreach still happens only in the app on your click.</p>
+
+<div class="row" style="gap:10px;margin:14px 0">
+  <a class="btn" href="{{ claude_url }}" target="_blank" rel="noopener">Open in Claude ↗</a>
+  <button class="btn secondary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('p').value).then(()=>{this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy prompt',1500)})">Copy prompt</button>
+</div>
+<p class="muted" style="font-size:13px;max-width:760px">"Open in Claude" pre-fills the prompt on claude.ai — press Enter there to start.
+For full automation (browser + API calls in one session), paste the prompt into a <strong>Cowork session in the Claude desktop app</strong>
+with your computer linked and Chrome connected. The prompt contains this app's API key — treat it like a password.</p>
+
+<div class="card" style="padding:14px 18px;max-width:860px">
+  <textarea id="p" readonly rows="22" style="width:100%;font:13px/1.5 ui-monospace,monospace" onclick="this.select()">{{ prompt }}</textarea>
+</div>
+
+<h2>How results come back</h2>
+<p class="muted" style="max-width:760px">The session calls <code>GET /api/v1/websourcing/roles/{{ role.slug }}/brief</code> for the JD and
+your latest targeting filters, then <code>POST /api/v1/websourcing/candidates</code> with what it finds. Each batch appears as a
+<em>claude-browser</em> run under Recent runs, and the candidates show up in the review list within seconds — scored, evidence-labelled,
+and never overriding anyone you already dismissed or moved.</p>
+{% endblock %}

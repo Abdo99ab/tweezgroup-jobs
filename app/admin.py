@@ -16,6 +16,14 @@ from .storage import get_storage
 bp = Blueprint("admin", __name__)
 
 
+@bp.context_processor
+def _inject_regions():
+    # role_form.html / sourcing_role.html call region_chips(..., regions, ...).
+    # Must be in every admin render — production previously 500'd on GET /roles/new
+    # because only role_edit passed it.
+    return {"regions": regions}
+
+
 def login_required(fn):
     @wraps(fn)
     def wrapper(*a, **kw):
@@ -67,7 +75,7 @@ def dashboard():
 def role_new():
     if request.method == "POST":
         return _save_role(Role())
-    return render_template("admin/role_form.html", role=None)
+    return render_template("admin/role_form.html", role=None, regions=regions)
 
 
 @bp.route("/roles/<int:role_id>/edit", methods=["GET", "POST"])
@@ -110,9 +118,15 @@ def _save_role(role):
     role.target_regions = ",".join(regions.parse(f.getlist("target_regions"))) or None
     role.target_custom = f.get("target_custom", "").strip()[:400] or None
     role.sourcing_autosend = f.get("sourcing_autosend") == "on"
-    if role.id is None:
-        db.session.add(role)
-    db.session.commit()
+    try:
+        if role.id is None:
+            db.session.add(role)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("save role failed")
+        flash(f"Could not save the role ({type(exc).__name__}): {exc}", "error")
+        return render_template("admin/role_form.html", role=role, regions=regions), 500
     flash("Role saved.", "ok")
     return redirect(url_for("admin.applicants", role=role.slug))
 
@@ -152,7 +166,9 @@ def role_delete(role_id):
     """Remove a job from the site and ATS. Drive files and ClickUp tasks are left in place."""
     role = Role.query.get_or_404(role_id)
     title = role.title
-    # Sourcing rows first (FK to role and optionally to applicants).
+    # Child rows first (web candidates can point at sourced profiles).
+    role.web_candidates.delete(synchronize_session=False)
+    role.websourcing_runs.delete(synchronize_session=False)
     for p in role.sourced_profiles.all():
         db.session.delete(p)
     for s in role.searches.all():
@@ -341,8 +357,12 @@ def sourcing_home():
         waiting = r.sourced_profiles.filter(SourcedProfile.decision == "approved", SourcedProfile.closed_at.is_(None),
                                             SourcedProfile.next_action.isnot(None),
                                             SourcedProfile.released.is_(False)).count()
+        from .models import WebCandidate
         per_role[r.id] = {"funnel": tot, "pending": pending, "waiting": waiting,
-                          "searches": r.searches.filter(SourcingSearch.status.in_(("pending", "running"))).count()}
+                          "searches": r.searches.filter(SourcingSearch.status.in_(("pending", "running"))).count(),
+                          "web_total": r.web_candidates.count(),
+                          "web_new": r.web_candidates.filter_by(status="new").count(),
+                          "web_strong": r.web_candidates.filter(WebCandidate.match_score >= 70).count()}
     status = sourcing.worker_status()
     last = SourcingAction.query.filter_by(actor="worker").order_by(SourcingAction.created_at.desc()).first()
     return render_template("admin/sourcing.html", roles=roles, per_role=per_role, status=status, last=last,
@@ -445,7 +465,7 @@ def sourcing_role(slug):
         elif action == "decide":
             ids = [int(i) for i in request.form.getlist("ids") if i.isdigit()]
             decision = request.form.get("decision")
-            n = 0
+            n = promoted = linked = 0
             for p in SourcedProfile.query.filter(SourcedProfile.id.in_(ids), SourcedProfile.role_id == role.id):
                 if decision == "approve":
                     sourcing.approve(p)
@@ -456,8 +476,18 @@ def sourcing_role(slug):
                 elif decision == "release":
                     sourcing.release(p)
                     n += 1
+                elif decision == "promote":
+                    _, created = sourcing.promote_to_applicant(p)
+                    promoted += created
+                    linked += not created
+                    n += 1
             db.session.commit()
-            flash(f"{n} profile(s) {decision}d." if n else "Nothing selected.", "ok" if n else "error")
+            if decision == "promote" and n:
+                flash(f"{promoted} candidate(s) added to Applicants as FILTRED APPLICATION"
+                      + (f" ({linked} already had an application — linked instead)" if linked else "")
+                      + " — they now show on the Dashboard and under Applicants.", "ok")
+            else:
+                flash(f"{n} profile(s) {decision}d." if n else "Nothing selected.", "ok" if n else "error")
         return redirect(url_for("admin.sourcing_role", slug=slug, tab=request.form.get("tab", "shortlist")))
 
     base = role.sourced_profiles
@@ -469,7 +499,10 @@ def sourcing_role(slug):
     contacted = base.filter(SourcedProfile.decision == "approved").order_by(
         SourcedProfile.updated_at.desc()).limit(300).all()
     searches = role.searches.order_by(SourcingSearch.created_at.desc()).limit(30).all()
+    web_total = role.web_candidates.count()
+    web_new = role.web_candidates.filter_by(status="new").count()
     return render_template("admin/sourcing_role.html", role=role, shortlist=shortlist, queue=queue,
+                           web_total=web_total, web_new=web_new,
                            contacted=contacted, searches=searches, funnel=sourcing.funnel(role),
                            stages=sourcing.FUNNEL_STAGES, tab=request.args.get("tab", "shortlist"),
                            status=sourcing.worker_status(), channels=CHANNELS, channel_labels=CHANNEL_LABELS,
@@ -522,7 +555,216 @@ def sourcing_profile(pid):
                 flash(f"Pre-score: {p.pre_score}.", "ok")
             except Exception as exc:
                 flash(f"Pre-score failed: {exc}", "error")
+        elif action == "promote":
+            a, created = sourcing.promote_to_applicant(p)
+            flash(f"{p.full_name} added to Applicants as FILTRED APPLICATION — now on the Dashboard "
+                  "and under Applicants." if created
+                  else f"{p.full_name} already has an application — linked to it.", "ok")
         db.session.commit()
         return redirect(url_for("admin.sourcing_profile", pid=pid))
     return render_template("admin/sourcing_profile.html", p=p, apply_url=sourcing.apply_url(p),
                            actions=p.actions.limit(50).all())
+
+
+# ---------- Web Sourcing (public-web discovery engine) ----------
+
+@bp.get("/web-sourcing")
+@login_required
+def websourcing_home():
+    from . import websourcing
+    from .models import WebCandidate, WebSourcingRun
+    roles = Role.query.order_by(Role.is_open.desc(), Role.title).all()
+    per_role = {r.id: {
+        "total": r.web_candidates.count(),
+        "new": r.web_candidates.filter_by(status="new").count(),
+        "shortlisted": r.web_candidates.filter_by(status="shortlisted").count(),
+        "strong": r.web_candidates.filter(WebCandidate.match_score >= 70).count(),
+    } for r in roles}
+    websourcing.reap_stale_runs()
+    runs = WebSourcingRun.query.order_by(WebSourcingRun.created_at.desc()).limit(8).all()
+    return render_template("admin/websourcing.html", roles=roles, per_role=per_role, runs=runs,
+                           adapters=websourcing.ADAPTERS, paused=websourcing.paused_role_ids(),
+                           active=WebSourcingRun.query.filter(
+                               WebSourcingRun.status.in_(("pending", "running", "stopping"))).count(),
+                           enabled=websourcing.enabled_sources(current_app.config))
+
+
+@bp.post("/web-sourcing/run")
+@login_required
+def websourcing_run():
+    from . import websourcing
+    role = Role.query.get_or_404(int(request.form.get("role_id", 0)))
+    sources = request.form.getlist("sources") or None
+    criteria = {k: request.form.get(k, "").strip()
+                for k in ("location", "profile", "tools", "languages")}
+    years = request.form.get("min_years", "").strip()
+    criteria["min_years"] = int(years) if years.isdigit() and int(years) > 0 else None
+    try:
+        run = websourcing.start_run(role, sources=sources,
+                                    seed_urls=request.form.get("seed_urls", ""), criteria=criteria)
+    except RuntimeError as exc:
+        flash(str(exc), "error")
+        return redirect(request.referrer or url_for("admin.websourcing_home"))
+    targeting = ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in run.criteria.items())
+    li = "linkedin" in (run.sources or "")
+    flash(("Discovery started for “{title}”."
+           + (" Chromium will search LinkedIn, then GitHub / GitLab / the other checked sites — keep `python -m worker run` going."
+              if li else " Keep `python -m worker run` going so Chromium opens the public sources.")
+           + " Claude scores each person against your filters."
+           + (f" Targeting {targeting}." if targeting else "")).format(title=role.title), "ok")
+    return redirect(url_for("admin.websourcing_role", slug=role.slug))
+
+
+@bp.get("/web-sourcing/<slug>")
+@login_required
+def websourcing_role(slug):
+    from . import websourcing
+    from .models import WebCandidate, WebSourcingRun
+    role = Role.query.filter_by(slug=slug).first_or_404()
+    websourcing.reap_stale_runs()
+    f = websourcing.filters_from_args(request.args)
+    rows = websourcing.apply_filters(WebCandidate.query.filter_by(role_id=role.id), f)
+    last_run = (WebSourcingRun.query.filter_by(role_id=role.id)
+                .order_by(WebSourcingRun.created_at.desc()).first())
+    all_rows = role.web_candidates
+    skills = sorted({s for r in all_rows.limit(500) for s in r.skills})[:40]
+    src_names = sorted({s["source"] for r in all_rows.limit(500) for s in r.sources})
+    return render_template("admin/websourcing_role.html", role=role, rows=rows, f=f,
+                           last_run=last_run, skills=skills, src_names=src_names,
+                           adapters=websourcing.ADAPTERS, role_paused=websourcing.is_paused(role),
+                           enabled=websourcing.enabled_sources(current_app.config))
+
+
+@bp.get("/web-sourcing/candidate/<int:cid>")
+@login_required
+def websourcing_candidate(cid):
+    from .models import WebCandidate
+    c = WebCandidate.query.get_or_404(cid)
+    return render_template("admin/websourcing_candidate.html", c=c, role=c.role)
+
+
+@bp.post("/web-sourcing/candidate/<int:cid>/decide")
+@login_required
+def websourcing_decide(cid):
+    from . import websourcing
+    from .models import WebCandidate
+    c = WebCandidate.query.get_or_404(cid)
+    action = request.form.get("action")
+    if action == "shortlist":
+        c.status = "shortlisted"
+        db.session.commit()
+        flash(f"{c.full_name} shortlisted.", "ok")
+    elif action == "dismiss":
+        c.status = "dismissed"
+        db.session.commit()
+        flash(f"{c.full_name} dismissed — they won't reappear on future runs.", "ok")
+    elif action == "restore":
+        c.status = "new"
+        db.session.commit()
+    elif action == "outreach":
+        # Recruiter-approved handoff to the outreach pipeline. Nothing is sent from here:
+        # the profile lands in Sourcing -> shortlist where every send is an explicit click.
+        p = websourcing.move_to_outreach(c)
+        flash(f"{c.full_name} moved to outreach — draft ready under Sourcing → {c.role.title} "
+              "(no message sent yet; sending stays your click).", "ok")
+        return redirect(url_for("admin.sourcing_role", slug=c.role.slug, tab="queue"))
+    elif action == "applicant":
+        # Straight into the ATS: outreach profile + Applicant with status FILTRED APPLICATION.
+        p = websourcing.move_to_outreach(c)
+        a, created = sourcing.promote_to_applicant(p)
+        flash(f"{c.full_name} added to Applicants as FILTRED APPLICATION — now on the Dashboard "
+              "and under Applicants." if created
+              else f"{c.full_name} already has an application — linked to it.", "ok")
+        return redirect(url_for("admin.applicant_detail", public_id=a.public_id))
+    nxt = request.form.get("next") or url_for("admin.websourcing_role", slug=c.role.slug)
+    return redirect(nxt)
+
+
+@bp.route("/web-sourcing/candidate/<int:cid>/email", methods=["GET", "POST"])
+@login_required
+def websourcing_email(cid):
+    from . import websourcing
+    from .models import WebCandidate
+    c = WebCandidate.query.get_or_404(cid)
+    if not c.email:
+        flash("This candidate has no publicly listed email address.", "error")
+        return redirect(url_for("admin.websourcing_candidate", cid=c.id))
+    if request.method == "POST":
+        subject = (request.form.get("subject") or "").strip()
+        body = (request.form.get("body") or "").strip()
+        if not subject or len(body) < 40:
+            flash("Please keep a subject and a message body.", "error")
+            return render_template("admin/websourcing_email.html", c=c, role=c.role,
+                                   subject=subject, body=body), 400
+        ok, err = websourcing.send_email(c, subject, body)
+        if ok:
+            flash(f"Email sent to {c.full_name} ({c.email}).", "ok")
+            return redirect(url_for("admin.websourcing_candidate", cid=c.id))
+        flash(f"Could not send the email: {err}", "error")
+        return render_template("admin/websourcing_email.html", c=c, role=c.role,
+                               subject=subject, body=body), 503
+    subject, body = websourcing.build_email(c)
+    return render_template("admin/websourcing_email.html", c=c, role=c.role,
+                           subject=subject, body=body)
+
+
+@bp.get("/web-sourcing/<slug>/launch")
+@login_required
+def websourcing_launch(slug):
+    """One-click hand-off to a Claude session with a real browser: shows the ready-made
+    prompt (with the API key filled in) and a link that opens claude.ai with it pre-filled."""
+    from urllib.parse import quote
+
+    from . import websourcing
+    role = Role.query.filter_by(slug=slug).first_or_404()
+    prompt = websourcing.launch_prompt(role)
+    claude_url = "https://claude.ai/new?q=" + quote(prompt)
+    return render_template("admin/websourcing_launch.html", role=role, prompt=prompt,
+                           claude_url=claude_url)
+
+
+@bp.get("/web-sourcing/workers")
+@login_required
+def websourcing_workers():
+    """All sourcing workers across every role in one place: the public-web discovery runs
+    (with Stop / per-role Pause) and the M1 LinkedIn-worker searches."""
+    from . import websourcing
+    from .models import WebSourcingRun
+    runs = (WebSourcingRun.query.order_by(
+        db.case((WebSourcingRun.status.in_(("running", "pending", "stopping")), 0), else_=1),
+        WebSourcingRun.created_at.desc()).limit(40).all())
+    active = [r for r in runs if r.status in ("running", "pending", "stopping")]
+    m1 = (SourcingSearch.query.filter(SourcingSearch.status.in_(("pending", "running")))
+          .order_by(SourcingSearch.created_at.desc()).limit(20).all())
+    roles = Role.query.order_by(Role.is_open.desc(), Role.title).all()
+    return render_template("admin/websourcing_workers.html", runs=runs, active=active, m1=m1,
+                           roles=roles, paused=websourcing.paused_role_ids(),
+                           sites=websourcing.SITES, browser_sites=websourcing.BROWSER_SITES,
+                           adapters=websourcing.ADAPTERS, worker=sourcing.worker_status())
+
+
+@bp.post("/web-sourcing/<slug>/stop")
+@login_required
+def websourcing_stop(slug):
+    from . import websourcing
+    role = Role.query.filter_by(slug=slug).first_or_404()
+    n = websourcing.stop_role_runs(role)
+    flash(f"Stop requested for {n} run(s) of “{role.title}” — they halt within seconds; "
+          "candidates already scored stay in the list." if n
+          else f"No active run for “{role.title}”.", "ok")
+    return redirect(request.form.get("next") or url_for("admin.websourcing_workers"))
+
+
+@bp.post("/web-sourcing/<slug>/pause")
+@login_required
+def websourcing_pause(slug):
+    from . import websourcing
+    role = Role.query.filter_by(slug=slug).first_or_404()
+    if websourcing.is_paused(role):
+        websourcing.set_paused(role, False)
+        flash(f"Sourcing resumed for “{role.title}”.", "ok")
+    else:
+        websourcing.set_paused(role, True)
+        flash(f"Sourcing paused for “{role.title}” — active runs are stopping and new runs "
+              "are blocked until you resume.", "ok")
+    return redirect(request.form.get("next") or url_for("admin.websourcing_workers"))

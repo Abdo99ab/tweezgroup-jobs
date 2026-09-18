@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from . import config
 from .client import Api
-from .linkedin import LinkedIn, Warning_
+from .linkedin import LinkedIn, Warning_, human_pause
 
 log = logging.getLogger("worker")
 
@@ -46,7 +46,9 @@ class Worker:
     def __init__(self, api: Api, linkedin: LinkedIn):
         self.api = api
         self.li = linkedin
-        self.last_inbox = None
+        # Skip the first-pass inbox visit so Chromium is not sitting on Messaging
+        # when the recruiter clicks Discover.
+        self.last_inbox = datetime.utcnow()
 
     # ----------------------------------------------------------------- one pass
     def pass_once(self):
@@ -61,9 +63,12 @@ class Worker:
         self.li.min_delay = status.get("min_delay", self.li.min_delay)
         self.li.max_delay = status.get("max_delay", self.li.max_delay)
         try:
-            self.run_searches()
+            searched = self.run_searches()
+            self.run_web_jobs()
             n = self.run_queue()
-            if self.last_inbox is None or datetime.utcnow() - self.last_inbox > timedelta(minutes=config.INBOX_EVERY):
+            # Inbox navigates to Messaging and hides people search. Skip it on a
+            # pass that just ran a Discover search; still check replies when idle.
+            if not searched and datetime.utcnow() - self.last_inbox > timedelta(minutes=config.INBOX_EVERY):
                 self.run_inbox()
         except Warning_ as w:
             log.error("WARNING from LinkedIn — pausing: %s", w)
@@ -72,22 +77,54 @@ class Worker:
         return "ok"
 
     def run_searches(self):
-        for s in self.api.pending_searches():
-            log.info("search #%s (%s): %r", s["id"], s["role"], s["query"])
-            try:
-                profiles = self.li.search_people(s["query"], s.get("location"), s.get("max_results", 50))
-            except Warning_:
-                self.api.post_results(s["id"], [], done=False, error="paused on LinkedIn warning")
-                raise
-            except Exception as exc:
-                log.exception("search failed")
-                self.api.post_results(s["id"], [], done=True, error=str(exc)[:300])
-                continue
-            for i in range(0, len(profiles), 25):
-                self.api.post_results(s["id"], profiles[i:i + 25], done=False)
-            self.api.post_results(s["id"], [], done=True)
-            log.info("search #%s: %d profiles", s["id"], len(profiles))
-            self.li.between_actions()
+        """Drain every pending LinkedIn search (all roles) in this pass, one after another."""
+        ran = False
+        while True:
+            batch = self.api.pending_searches()
+            if not batch:
+                break
+            for s in batch:
+                ran = True
+                log.info("search #%s (%s): %r", s["id"], s["role"], s["query"])
+                try:
+                    profiles = self.li.search_people(s["query"], s.get("location"), s.get("max_results", 50))
+                except Warning_:
+                    self.api.post_results(s["id"], [], done=False, error="paused on LinkedIn warning")
+                    raise
+                except Exception as exc:
+                    log.exception("search failed")
+                    self.api.post_results(s["id"], [], done=True, error=str(exc)[:300])
+                    continue
+                for i in range(0, len(profiles), 25):
+                    self.api.post_results(s["id"], profiles[i:i + 25], done=False)
+                self.api.post_results(s["id"], [], done=True)
+                log.info("search #%s: %d profiles", s["id"], len(profiles))
+                self.li.between_actions()
+        return ran
+
+    def run_web_jobs(self):
+        """Visit GitHub / GitLab / SO / HN / YC / pasted pages in the same Chromium window."""
+        page = getattr(self.li, "page", None)
+        if page is None:
+            return
+        job = self.api.next_web_job()
+        if not job:
+            return
+        extra = page.context.new_page()
+        try:
+            from .websearch import WebSearch
+            ws = WebSearch(extra)
+            while job:
+                log.info("web job #%s sources=%s", job.get("id"), job.get("sources"))
+                for source in job.get("sources") or []:
+                    log.info("web job #%s browsing %s", job["id"], source)
+                    cands, notes = ws.run_source(source, job)
+                    self.api.post_web_results(job["id"], source, cands, notes, done=True)
+                    log.info("web job #%s %s: %s profile(s)", job["id"], source, len(cands))
+                    human_pause(2, 5)
+                job = self.api.next_web_job()
+        finally:
+            extra.close()
 
     def run_queue(self):
         q = self.api.queue(config.MAX_ACTIONS_PER_PASS)
@@ -142,5 +179,15 @@ class Worker:
                 log.exception("pass failed")
                 result = "error"
             wait = config.POLL_SECONDS if result in ("ok", "error") else max(config.POLL_SECONDS, 900)
-            log.info("sleeping %ss", wait)
-            time.sleep(wait)
+            log.info("sleeping %ss (wakes early if a search is queued)", wait)
+            slept = 0
+            while slept < wait:
+                time.sleep(min(5, wait - slept))
+                slept += 5
+                try:
+                    st = self.api.status()
+                except Exception:
+                    continue
+                if st.get("pending_searches") or st.get("pending_web_jobs"):
+                    log.info("work queued — waking")
+                    break

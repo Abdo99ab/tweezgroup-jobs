@@ -1,0 +1,74 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ c.full_name }} — Web Sourcing{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('admin.websourcing_role', slug=role.slug) }}" class="muted">← {{ role.title }} candidates</a></p>
+<div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+  <div>
+    <h1 style="margin-bottom:2px">{{ c.full_name }}
+      {% if c.status != 'new' %}<span class="pill {{ 'hired' if c.status=='shortlisted' else ('selected' if c.status=='moved' else 'rejected') }}">{{ c.status|upper }}</span>{% endif %}</h1>
+    <p class="muted" style="margin-top:0">{{ c.headline or '' }}{% if c.company %} · {{ c.company }}{% endif %}{% if c.location %} · {{ c.location }}{% endif %}</p>
+  </div>
+  <div class="card" style="padding:12px 20px;text-align:center">
+    <div style="font-size:34px;font-weight:800" class="score">{{ c.match_score if c.match_score is not none else '–' }}</div>
+    <div class="muted" style="font-size:12px">match score · confidence: {{ c.confidence or '?' }}</div>
+  </div>
+</div>
+
+<div class="row" style="gap:8px;flex-wrap:wrap;margin:6px 0 16px">
+  <form method="post" action="{{ url_for('admin.websourcing_decide', cid=c.id) }}" class="row" style="gap:8px">
+    <input type="hidden" name="next" value="{{ url_for('admin.websourcing_candidate', cid=c.id) }}">
+    {% if c.status == 'new' %}<button class="btn" name="action" value="shortlist">Shortlist</button>{% endif %}
+    {% if c.email and c.status != 'dismissed' %}
+    <a class="btn" href="{{ url_for('admin.websourcing_email', cid=c.id) }}">{{ '✉ Email again' if c.emailed_at else '✉ Email candidate' }}</a>
+    {% endif %}
+    {% if c.status in ('new','shortlisted') %}
+    <button class="btn secondary" name="action" value="outreach"
+      onclick="return confirm('Move {{ c.full_name }} to the outreach pipeline? A draft is prepared but nothing is sent without your click.')">Move to outreach</button>
+    <button class="btn secondary" name="action" value="applicant"
+      title="Create an application with status FILTRED APPLICATION — shows on the Dashboard, under Applicants and on ClickUp"
+      onclick="return confirm('Add {{ c.full_name }} to Applicants as FILTRED APPLICATION?')">Add to Applicants (Filtered)</button>
+    <button class="btn danger" name="action" value="dismiss">Dismiss</button>
+    {% elif c.status == 'dismissed' %}<button class="btn secondary" name="action" value="restore">Restore</button>{% endif %}
+  </form>
+  {% if c.status == 'moved' %}<a class="btn" href="{{ url_for('admin.sourcing_role', slug=role.slug, tab='queue') }}">Open in outreach queue →</a>{% endif %}
+  {% if c.emailed_at %}<span class="pill test_returned" style="align-self:center">EMAILED {{ c.emailed_at.strftime('%d %b %H:%M') }} UTC</span>{% endif %}
+</div>
+
+{% if c.match_reason %}<div class="card" style="padding:12px 18px"><strong>Why this score:</strong> {{ c.match_reason }}</div>{% endif %}
+
+<div class="grid cols-2" style="align-items:start">
+<div>
+  <h2>Matching criteria</h2>
+  {% if c.matched %}<ul style="margin:4px 0">{% for m in c.matched %}<li>✓ {{ m }}</li>{% endfor %}</ul>
+  {% else %}<p class="muted">None recorded.</p>{% endif %}
+  <h2>Missing / unknown</h2>
+  {% if c.missing %}<ul style="margin:4px 0" class="muted">{% for m in c.missing %}<li>? {{ m }}</li>{% endfor %}</ul>
+  {% else %}<p class="muted">Nothing flagged.</p>{% endif %}
+  <h2>Profile</h2>
+  <table>
+    <tr><th style="width:130px">Profile</th><td><a href="{{ c.profile_url }}" target="_blank" rel="noopener">{{ c.profile_url }} ↗</a></td></tr>
+    {% if c.website %}<tr><th>Website</th><td><a href="{{ c.website }}" target="_blank" rel="noopener">{{ c.website }} ↗</a></td></tr>{% endif %}
+    {% if c.email %}<tr><th>Public email</th><td>{{ c.email }} <span class="muted" style="font-size:12px">(published by the candidate themselves)</span></td></tr>{% endif %}
+    {% if c.skills %}<tr><th>Skills seen</th><td>{{ c.skills|join(', ') }}</td></tr>{% endif %}
+    {% if c.languages %}<tr><th>Languages</th><td>{{ c.languages|join(', ') }}</td></tr>{% endif %}
+    <tr><th>Source(s)</th><td>{% for s in c.sources %}<a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.source }} ↗</a>{{ ' · ' if not loop.last }}{% endfor %}</td></tr>
+    <tr><th>Discovered</th><td>{{ c.discovered_at.strftime('%d %b %Y %H:%M') }} UTC</td></tr>
+  </table>
+  {% if c.projects %}
+  <h2>Public projects</h2>
+  <table><tr><th>Project</th><th>★</th><th>About</th></tr>
+  {% for p in c.projects %}<tr><td><a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.name }} ↗</a></td>
+    <td>{{ p.stars or '' }}</td><td class="muted" style="font-size:13px">{{ p.desc or '' }}</td></tr>{% endfor %}
+  </table>{% endif %}
+</div>
+<div>
+  <h2>Evidence <span class="muted" style="font-weight:400;font-size:14px">— every claim, with where it comes from</span></h2>
+  <table><tr><th style="width:90px">Label</th><th>Claim</th></tr>
+  {% for e in c.evidence %}<tr>
+    <td><span class="pill {{ 'hired' if e.label=='Confirmed' else ('test_returned' if e.label=='Likely' else 'rejected') }}">{{ e.label|upper }}</span></td>
+    <td style="font-size:14px">{{ e.claim }}{% if e.url %} <a href="{{ e.url }}" target="_blank" rel="noopener" class="muted" style="font-size:12px">source ↗</a>{% endif %}</td>
+  </tr>{% else %}<tr><td colspan="2" class="muted">No evidence items.</td></tr>{% endfor %}
+  </table>
+</div>
+</div>
+{% endblock %}

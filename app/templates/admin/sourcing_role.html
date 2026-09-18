@@ -8,6 +8,14 @@
   <a href="{{ url_for('admin.role_edit', role_id=role.id) }}">Edit templates</a>
   {% if status.paused_until %}· <span class="pill rejected">WORKER PAUSED</span>{% endif %}</p>
 
+{% if web_total %}
+<div class="card" style="padding:10px 16px;margin-bottom:10px;font-size:14px">
+  <strong>Web Sourcing found {{ web_total }} candidate{{ '' if web_total == 1 else 's' }} for this role</strong>
+  <span class="muted">— {{ web_new }} still to review, evidence-scored from public sources.</span>
+  <a class="btn small" style="margin-left:10px" href="{{ url_for('admin.websourcing_role', slug=role.slug) }}">Open web results →</a>
+</div>
+{% endif %}
+
 {% set tot = {} %}{% for s in stages %}{% set _ = tot.update({s: funnel.values()|map(attribute=s)|sum}) %}{% endfor %}
 <div class="grid cols-4">
   {% for s in stages %}<div class="stat"><div class="n">{{ tot[s] }}</div><div class="l">{{ s.replace('_',' ') }}</div></div>{% endfor %}
@@ -23,6 +31,9 @@
 <form method="post"><input type="hidden" name="action" value="decide"><input type="hidden" name="tab" value="shortlist">
 <div class="row" style="margin-bottom:10px">
   <button class="btn small" name="decision" value="approve" type="submit">Approve selected</button>
+  <button class="btn small secondary" name="decision" value="promote" type="submit"
+    title="Create an application with status FILTRED APPLICATION for each selected candidate — they appear on the Dashboard, under Applicants and on ClickUp"
+    onclick="return confirm('Add the selected candidates to Applicants as FILTRED APPLICATION?')">Add to Applicants (Filtered)</button>
   <button class="btn small danger" name="decision" value="reject" type="submit">Reject selected</button>
   <span class="muted" style="font-size:13px">Approving renders the messages from the role templates and queues the connection request.</span>
 </div>
@@ -56,7 +67,7 @@
 </table></form>
 
 {% elif tab == 'contacted' %}
-<table><tr><th>Candidate</th><th>Channel</th><th>Stage</th><th>Invite</th><th>Accepted</th><th>Link sent</th><th>Opened</th><th>Applied</th><th>Closed</th></tr>
+<table><tr><th>Candidate</th><th>Channel</th><th>Stage</th><th>Invite</th><th>Accepted</th><th>Link sent</th><th>Opened</th><th>Applied</th><th>Closed</th><th></th></tr>
 {% for p in contacted %}<tr>
   <td><a href="{{ url_for('admin.sourcing_profile', pid=p.id) }}"><strong>{{ p.full_name }}</strong></a></td>
   <td>{{ p.channel }}</td><td><span class="pill">{{ p.stage }}</span></td>
@@ -66,7 +77,14 @@
   <td class="muted">{{ p.link_opened_at.strftime('%d %b') if p.link_opened_at else '' }}</td>
   <td>{% if p.applicant %}<a href="{{ url_for('admin.applicant_detail', public_id=p.applicant.public_id) }}"><span class="pill {{ p.applicant.status }}">{{ labels[p.applicant.status] }}</span></a>{% endif %}</td>
   <td class="muted">{{ p.close_reason or '' }}</td>
-</tr>{% else %}<tr><td colspan="9" class="muted">No approved profiles yet.</td></tr>{% endfor %}
+  <td>{% if not p.applicant %}
+    <form method="post"><input type="hidden" name="action" value="decide"><input type="hidden" name="tab" value="contacted">
+      <input type="hidden" name="decision" value="promote"><input type="hidden" name="ids" value="{{ p.id }}">
+      <button class="btn small secondary" type="submit"
+        title="Create an application with status FILTRED APPLICATION — shows on the Dashboard, under Applicants and on ClickUp"
+        onclick="return confirm('Add {{ p.full_name }} to Applicants as FILTRED APPLICATION?')">To Applicants</button>
+    </form>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="10" class="muted">No approved profiles yet.</td></tr>{% endfor %}
 </table>
 
 {% else %}

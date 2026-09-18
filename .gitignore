@@ -10,3 +10,4 @@ client_secret*.json
 worker/.env
 worker/linkedin-profile/
 worker/data/
+linkedin-profile/

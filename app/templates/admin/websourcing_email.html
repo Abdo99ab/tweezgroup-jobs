@@ -1,0 +1,26 @@
+{% extends "admin/base.html" %}
+{% block title %}Email {{ c.full_name }} — Web Sourcing{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('admin.websourcing_candidate', cid=c.id) }}" class="muted">← {{ c.full_name }}</a></p>
+<h1>Email {{ c.full_name }}</h1>
+<p class="muted" style="max-width:720px">The draft below was generated from this candidate's public evidence — nothing invented.
+Review and edit it, then send. It goes out through the app's Gmail account (mehdi@tweezgroup.com in production)
+and nothing is sent until you click the button.</p>
+{% if c.emailed_at %}<p><span class="pill test_returned">ALREADY EMAILED</span> <span class="muted">on {{ c.emailed_at.strftime('%d %b %Y %H:%M') }} UTC — sending again will be a follow-up.</span></p>{% endif %}
+
+<form method="post" class="card" style="padding:18px 20px;max-width:760px">
+  <table style="margin-bottom:10px">
+    <tr><th style="width:90px">To</th><td>{{ c.full_name }} &lt;{{ c.email }}&gt; <span class="muted" style="font-size:12px">(publicly listed by the candidate)</span></td></tr>
+    <tr><th>Role</th><td>{{ role.title }}</td></tr>
+  </table>
+  <label>Subject<br><input name="subject" value="{{ subject }}" required style="width:100%"></label>
+  <label style="display:block;margin-top:10px">Message<br>
+    <textarea name="body" rows="16" required style="width:100%;font-size:14px;line-height:1.5">{{ body }}</textarea></label>
+  <div class="row" style="gap:10px;margin-top:12px">
+    <button class="btn" type="submit"
+      onclick="return confirm('Send this email to {{ c.email }} now?')">Send email</button>
+    <a class="btn secondary" href="{{ url_for('admin.websourcing_email', cid=c.id) }}">Regenerate draft</a>
+    <a class="btn secondary" href="{{ url_for('admin.websourcing_candidate', cid=c.id) }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

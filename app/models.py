@@ -432,3 +432,138 @@ class SourcingAction(db.Model):
     detail = db.Column(db.Text)
     actor = db.Column(db.String(30), default="worker")
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+
+
+# ------------------------------------------------------------------- Public-web sourcing (websourcing package)
+
+def _json_get(raw, default):
+    import json as _json
+    try:
+        v = _json.loads(raw) if raw else default
+        return v if isinstance(v, type(default)) else default
+    except Exception:
+        return default
+
+
+def _json_set(value):
+    import json as _json
+    return _json.dumps(value, ensure_ascii=False) if value else None
+
+
+class WebSourcingRun(db.Model):
+    """One discovery run of the public-web sourcing engine for a role."""
+    __tablename__ = "websourcing_runs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    role_id = db.Column(db.Integer, db.ForeignKey("roles.id"), nullable=False, index=True)
+    status = db.Column(db.String(20), default="pending", nullable=False, index=True)  # pending/running/done/error
+    sources = db.Column(db.String(400))          # comma-separated adapter names this run used
+    seed_urls = db.Column(db.Text)               # recruiter-pasted portfolio / team-page / directory URLs
+    criteria_json = db.Column(db.Text)           # recruiter's targeting: location, min_years, profile, tools, languages
+    requirements_json = db.Column(db.Text)       # JD requirements Claude extracted (skills, seniority, languages...)
+    queries_json = db.Column(db.Text)            # generated search queries per adapter
+    stats_json = db.Column(db.Text)              # per-adapter counts: found / kept / skipped(robots, rate-limit)
+    error = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    finished_at = db.Column(db.DateTime)
+
+    role = db.relationship("Role", backref=db.backref("websourcing_runs", lazy="dynamic"))
+    candidates = db.relationship("WebCandidate", backref="run", lazy="dynamic")
+
+    @property
+    def requirements(self):
+        return _json_get(self.requirements_json, {})
+
+    @property
+    def criteria(self):
+        return _json_get(self.criteria_json, {})
+
+    @property
+    def stats(self):
+        return _json_get(self.stats_json, {})
+
+    @property
+    def queries(self):
+        return _json_get(self.queries_json, {})
+
+
+class WebCandidate(db.Model):
+    """A person discovered on a public source, matched against a role's JD.
+
+    Only publicly listed professional information is stored; every claim carries an evidence item
+    labelled Confirmed / Likely / Unknown with the URL it came from. Nothing is ever invented."""
+    __tablename__ = "web_candidates"
+    __table_args__ = (db.UniqueConstraint("role_id", "dedupe_key", name="uq_webcand_role_key"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    role_id = db.Column(db.Integer, db.ForeignKey("roles.id"), nullable=False, index=True)
+    run_id = db.Column(db.Integer, db.ForeignKey("websourcing_runs.id"), index=True)
+
+    full_name = db.Column(db.String(200), nullable=False)
+    headline = db.Column(db.String(400))         # current title / short bio as published
+    location = db.Column(db.String(200))
+    company = db.Column(db.String(200))
+    email = db.Column(db.String(200))            # only if publicly listed by the person themselves
+    website = db.Column(db.String(400))          # personal site / portfolio
+    profile_url = db.Column(db.String(400), nullable=False)   # main public profile
+    dedupe_key = db.Column(db.String(400), nullable=False, index=True)
+
+    sources_json = db.Column(db.Text)            # [{"source": "github", "url": ...}] every place we saw them
+    skills_json = db.Column(db.Text)             # ["python", "react", ...] as evidenced
+    languages_json = db.Column(db.Text)          # spoken languages, only when published
+    projects_json = db.Column(db.Text)           # notable public repos / projects [{name, url, stars, desc}]
+    evidence_json = db.Column(db.Text)           # [{"claim": ..., "label": "Confirmed|Likely|Unknown", "url": ...}]
+    raw_json = db.Column(db.Text)                # adapter payload (public data only), for the detail page
+
+    match_score = db.Column(db.Integer)          # 0-100 vs the JD
+    confidence = db.Column(db.String(10))        # high / medium / low (evidence quality + source reliability)
+    matched_json = db.Column(db.Text)            # criteria met, ["5y Python (Confirmed)", ...]
+    missing_json = db.Column(db.Text)            # requirements with no evidence
+    match_reason = db.Column(db.Text)            # short factual explanation
+
+    status = db.Column(db.String(15), default="new", nullable=False, index=True)  # new/shortlisted/dismissed/moved
+    emailed_at = db.Column(db.DateTime)          # recruiter sent the outreach email (explicit click)
+    sourced_profile_id = db.Column(db.Integer, db.ForeignKey("sourced_profiles.id"))  # set when moved to outreach
+    discovered_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    role = db.relationship("Role", backref=db.backref("web_candidates", lazy="dynamic"))
+
+    @property
+    def sources(self):
+        return _json_get(self.sources_json, [])
+
+    @property
+    def skills(self):
+        return _json_get(self.skills_json, [])
+
+    @property
+    def languages(self):
+        return _json_get(self.languages_json, [])
+
+    @property
+    def projects(self):
+        return _json_get(self.projects_json, [])
+
+    @property
+    def evidence(self):
+        return _json_get(self.evidence_json, [])
+
+    @property
+    def matched(self):
+        return _json_get(self.matched_json, [])
+
+    @property
+    def missing(self):
+        return _json_get(self.missing_json, [])
+
+    def to_dict(self):
+        return {
+            "id": self.id, "role": self.role.slug, "full_name": self.full_name, "headline": self.headline,
+            "location": self.location, "company": self.company, "email": self.email, "website": self.website,
+            "profile_url": self.profile_url, "sources": self.sources, "skills": self.skills,
+            "languages": self.languages, "projects": self.projects, "evidence": self.evidence,
+            "match_score": self.match_score, "confidence": self.confidence, "matched": self.matched,
+            "missing": self.missing, "match_reason": self.match_reason, "status": self.status,
+            "discovered_at": self.discovered_at.isoformat() + "Z",
+        }

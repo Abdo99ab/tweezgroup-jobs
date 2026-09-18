@@ -11,7 +11,7 @@ API_KEY = os.environ.get("API_KEY", "")
 PROFILE_DIR = Path(os.environ.get("LINKEDIN_PROFILE_DIR", Path.home() / ".tweez-linkedin-profile"))
 HEADLESS = os.environ.get("HEADLESS", "0") == "1"          # keep headed: LinkedIn is far less suspicious
 SLOW_MO = int(os.environ.get("SLOW_MO_MS", "60"))           # ms added to every Playwright action
-POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "300"))   # idle wait between passes
+POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "45"))    # idle wait between passes (keep low so Discover picks up fast)
 INBOX_EVERY = int(os.environ.get("INBOX_EVERY_MINUTES", "30"))
 LOCALE = os.environ.get("BROWSER_LOCALE", "fr-FR")
 TIMEZONE = os.environ.get("BROWSER_TZ", "Europe/Paris")
