@@ -109,12 +109,71 @@ class LinkedIn:
         time.sleep(random.uniform(self.min_delay, self.max_delay))
 
     # ------------------------------------------------------------------ search
+    def _apply_location_filter(self, location):
+        """Apply the location with LinkedIn's own Locations filter (never typed into the
+        search bar). Click the Locations pill, type, pick the first suggestion, apply.
+        EN/FR selector candidates. Returns True when the filter took effect."""
+        pill = self._first([
+            'button#searchFilter_geoUrn',
+            'button[aria-label*="Locations filter" i]',
+            'button[aria-label*="filtre Lieux" i]', 'button[aria-label*="Lieux" i]',
+            'button:has-text("Locations")', 'button:has-text("Lieux")',
+        ], 6000)
+        if not pill:
+            return False
+        try:
+            pill.click()
+            human_pause(0.8, 1.6)
+            box = self._first([
+                'input[placeholder*="Add a location" i]', 'input[aria-label*="Add a location" i]',
+                'input[placeholder*="Ajouter un lieu" i]', 'input[aria-label*="Ajouter un lieu" i]',
+            ], 5000)
+            if not box:
+                return False
+            box.click()
+            box.fill("")
+            box.type(location, delay=random.randint(60, 140))
+            human_pause(1.2, 2.2)                      # let the suggestions load
+            opt = self._first(['div[role="listbox"] [role="option"]',
+                               'ul[role="listbox"] li',
+                               '.basic-typeahead__triggered-content li'], 4000)
+            if opt:
+                opt.click()
+            else:
+                box.press("ArrowDown")
+                human_pause(0.3, 0.6)
+                box.press("Enter")
+            human_pause(0.6, 1.2)
+            show = self._first(['button[aria-label*="Apply current filter" i]',
+                                'button[aria-label*="Appliquer le filtre" i]',
+                                'button:has-text("Show results")',
+                                'button:has-text("Afficher les résultats")'], 4000)
+            if show:
+                show.click()
+            human_pause(2, 4)
+            self.check_warning()
+            return "geourn" in self.page.url.lower()
+        except Exception as exc:
+            log.warning("location filter failed (%s) — falling back to keyword location", exc)
+            return False
+
     def search_people(self, query, location=None, max_results=50):
-        """Yields dicts {profile_url, full_name, headline, location} from LinkedIn people search."""
-        q = query if not location else f"{query} {location}"
+        """Yields dicts {profile_url, full_name, headline, location} from LinkedIn people search.
+
+        ONLY the role title goes in the search bar (cramming tools/keywords next to it —
+        e.g. 'Customer Support edesk' — returns nothing). People tab is preselected by the
+        /search/results/people/ URL; the location is applied via the Locations filter."""
+        self.goto(f"https://www.linkedin.com/search/results/people/?keywords={quote_plus(query)}")
+        if location and not self._apply_location_filter(location):
+            # filter UI unavailable (layout change) — last resort: location as a keyword
+            self.goto("https://www.linkedin.com/search/results/people/?keywords="
+                      + quote_plus(f"{query} {location}"))
+        base_url = self.page.url.split("&page=")[0].split("?page=")[0]
         seen, out, page_no = set(), [], 1
         while len(out) < max_results and page_no <= 10:
-            self.goto(f"https://www.linkedin.com/search/results/people/?keywords={quote_plus(q)}&page={page_no}")
+            if page_no > 1:
+                sep = "&" if "?" in base_url else "?"
+                self.goto(f"{base_url}{sep}page={page_no}")
             cards = self._collect_cards()
             if not cards:
                 break

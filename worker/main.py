@@ -110,21 +110,39 @@ class Worker:
         job = self.api.next_web_job()
         if not job:
             return
+        from .websearch import WebSearch
         extra = page.context.new_page()
+        ws = WebSearch(extra)
         try:
-            from .websearch import WebSearch
-            ws = WebSearch(extra)
             while job:
                 log.info("web job #%s sources=%s", job.get("id"), job.get("sources"))
                 for source in job.get("sources") or []:
                     log.info("web job #%s browsing %s", job["id"], source)
-                    cands, notes = ws.run_source(source, job)
-                    self.api.post_web_results(job["id"], source, cands, notes, done=True)
+                    try:
+                        if extra.is_closed():          # a crashed tab must not strand the queue
+                            extra = page.context.new_page()
+                            ws = WebSearch(extra)
+                        cands, notes = ws.run_source(source, job)
+                    except Exception as exc:           # one broken source never kills the loop
+                        log.exception("web job #%s %s crashed", job["id"], source)
+                        cands, notes = [], [f"{type(exc).__name__}: {exc}"[:200]]
+                    # ALWAYS report, even empty/failed — otherwise the app shows
+                    # "Chromium is opening this source…" forever. Retry the POST once.
+                    for attempt in (1, 2):
+                        try:
+                            self.api.post_web_results(job["id"], source, cands, notes, done=True)
+                            break
+                        except Exception as exc:
+                            log.warning("posting %s results failed (try %s): %s", source, attempt, exc)
+                            time.sleep(3)
                     log.info("web job #%s %s: %s profile(s)", job["id"], source, len(cands))
                     human_pause(2, 5)
                 job = self.api.next_web_job()
         finally:
-            extra.close()
+            try:
+                extra.close()
+            except Exception:
+                pass
 
     def run_queue(self):
         q = self.api.queue(config.MAX_ACTIONS_PER_PASS)

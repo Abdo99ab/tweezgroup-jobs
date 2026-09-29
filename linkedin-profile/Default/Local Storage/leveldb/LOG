@@ -1,3 +1,8 @@
-2026/09/11-15:19:00.340 6c70 Reusing MANIFEST D:\Downloads\applicantsystem\linkedin-profile\Default\Local Storage\leveldb/MANIFEST-000001
-2026/09/11-15:19:00.346 6c70 Recovering log #3
-2026/09/11-15:19:00.348 6c70 Reusing old log D:\Downloads\applicantsystem\linkedin-profile\Default\Local Storage\leveldb/000003.log 
+2026/09/29-13:01:07.839 2b4c Reusing MANIFEST D:\Downloads\applicantsystem\linkedin-profile\Default\Local Storage\leveldb/MANIFEST-000001
+2026/09/29-13:01:07.848 2b4c Recovering log #3
+2026/09/29-13:01:07.850 2b4c Level-0 table #3: started
+2026/09/29-13:01:07.857 2b4c Level-0 table #3: 11065 bytes OK
+2026/09/29-13:01:07.869 2b4c Recovering log #4
+2026/09/29-13:01:07.872 2b4c Reusing old log D:\Downloads\applicantsystem\linkedin-profile\Default\Local Storage\leveldb/000004.log 
+2026/09/29-13:01:07.875 2b4c Delete type=0 #3
+2026/09/29-13:01:07.875 2b4c Delete type=2 #5

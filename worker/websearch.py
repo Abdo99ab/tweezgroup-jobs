@@ -174,10 +174,17 @@ class WebSearch:
         return out
 
     def search_ycombinator(self, job):
-        q = " ".join(((job.get("requirements") or {}).get("skills") or [])[:2]
-                     or [job.get("title") or "software"])
-        self.goto(f"https://www.ycombinator.com/companies?query={quote_plus(q)}")
-        cards = self._eval("""() => {
+        # Same clean-query rule as everywhere: ONE idea per search in the YC box — the
+        # industry, then the main tool, then the role title — never keywords concatenated.
+        req = job.get("requirements") or {}
+        crit = job.get("criteria") or {}
+        queries = [q for q in ((req.get("industries") or [None])[0],
+                               (req.get("skills") or [None])[0],
+                               (crit.get("profile") or job.get("title") or "").strip() or None)
+                   if q]
+        queries = list(dict.fromkeys(queries))[:2] or ["software"]
+        cap, out = job.get("cap") or 25, []
+        js = """() => {
           const out = [];
           for (const a of document.querySelectorAll('a[href*="/companies/"]')) {
             const href = a.href.split('?')[0];
@@ -188,11 +195,49 @@ class WebSearch:
             if (out.length >= 15) break;
           }
           return out;
-        }""")
-        return cards[: job.get("cap") or 25]
+        }"""
+        for q in queries:
+            if len(out) >= cap:
+                break
+            self.goto(f"https://www.ycombinator.com/companies?query={quote_plus(q)}")
+            for c in self._eval(js):
+                if c["profile_url"] not in {x["profile_url"] for x in out}:
+                    out.append(c)
+                if len(out) >= cap:
+                    break
+        return out[:cap]
 
     def search_webpages(self, job):
-        return self._visit_seeds(job.get("seeds") or [], job.get("cap") or 25)
+        seeds = [u for u in (job.get("seeds") or [])
+                 if not any(b in u for b in ("greenhouse", "lever.co", "ashbyhq"))]
+        if seeds:
+            return self._visit_seeds(seeds, job.get("cap") or 25)
+        # No pasted URLs: find personal portfolios with a normal web search in the browser
+        # (title + "portfolio" + location — same clean-query rule as everywhere else).
+        crit = job.get("criteria") or {}
+        title = (crit.get("profile") or job.get("title") or "").strip()
+        loc = (crit.get("location") or "").split("/")[0].split(",")[0].strip()
+        q = " ".join(x for x in (title, "portfolio", loc) if x)
+        self.goto(f"https://duckduckgo.com/html/?q={quote_plus(q)}")
+        links = self._eval("""() => {
+          const out = [];
+          const bad = /duckduckgo|linkedin\\.|facebook\\.|youtube\\.|twitter\\.|x\\.com|instagram\\.|glassdoor|indeed\\.|wikipedia|reddit\\.|tiktok|pinterest|amazon\\.|fiverr|upwork\\.|medium\\.com\\/tag/;
+          for (const a of document.querySelectorAll('a.result__a, a[href^="http"]')) {
+            let href = a.href;
+            try {
+              const u = new URL(href);
+              const target = u.searchParams.get('uddg');   // duckduckgo redirect links
+              if (target) href = decodeURIComponent(target);
+              const h = new URL(href).hostname.replace(/^www\\./, '');
+              if (bad.test(h) || bad.test(href)) continue;
+              href = href.split('?')[0];
+              if (!out.includes(href)) out.push(href);
+            } catch (e) {}
+            if (out.length >= 8) break;
+          }
+          return out;
+        }""") or []
+        return self._visit_seeds(links, job.get("cap") or 25)
 
     def search_boards(self, job):
         seeds = [u for u in (job.get("seeds") or [])
@@ -220,6 +265,17 @@ class WebSearch:
             const email = a.href.replace(/^mailto:/i, '').split('?')[0];
             const name = (a.innerText || email.split('@')[0]).trim();
             people.push({profile_url: location.href, full_name: name, headline: '', location: '', email});
+          }
+          if (!people.length) {
+            // single-person portfolio with no structured data: take the page's own name
+            const t = ((document.querySelector('meta[property="og:title"]') || {}).content
+                       || (document.querySelector('h1') || {}).innerText || document.title || '');
+            const name = t.split(/[|\\u2014\\u2013·-]/)[0].trim();
+            const words = name.split(/\\s+/).filter(Boolean);
+            if (words.length >= 2 && words.length <= 4 && /^[A-ZÀ-Ý]/.test(name))
+              people.push({profile_url: location.href, full_name: name,
+                           headline: ((document.querySelector('meta[property="og:description"], meta[name="description"]') || {}).content || '').slice(0, 300),
+                           location: ''});
           }
           return people.filter(p => p.full_name).slice(0, 20);
         }"""

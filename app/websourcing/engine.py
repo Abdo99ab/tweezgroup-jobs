@@ -49,7 +49,9 @@ Return ONLY a JSON object:
   "languages": spoken languages required, e.g. ["english", "french"] (empty if not stated)
   "location": one line: where the person must be / remote policy ("" if not stated)
   "industries": up to 4 industry keywords (e.g. "e-commerce", "logistics")
-  "queries": {{"github": [2-3 GitHub user-search queries, e.g. "language:python location:france"],
+  "queries": {{"github": [2-3 GitHub user-search queries, each ONE idea only — a single
+              language/tool or the quoted title with in:bio, plus a location: qualifier
+              (e.g. "language:python location:france"); never concatenate several keywords],
               "gitlab": [1-2 short project-search keywords]}}
 Use only what the description states — do not invent requirements."""
 
@@ -212,9 +214,12 @@ def build_queries(role, req):
     loc = (req.get("location") or "").split(",")[0].split("(")[0].strip()
     loc_q = f' location:"{loc}"' if loc and len(loc.split()) <= 3 and "remote" not in loc.lower() else ""
     if not q.get("github"):
-        q["github"] = [(" ".join(skills[:2]) + (f' "{title}" in:bio' if title else "") + loc_q)[:100],
-                       (" ".join(skills[:3]) + loc_q)[:100]]
-        q["github"] = [x for x in q["github"] if x.strip()]
+        # ONE clean idea per query — the title (as a bio search) or one tool — plus the
+        # location qualifier. Concatenating many keywords finds nobody.
+        q["github"] = [x.strip() for x in ((f'"{title}" in:bio{loc_q}' if title else ""),
+                                           (f"{skills[0]}{loc_q}" if skills else ""),
+                                           (f"{skills[1]}{loc_q}" if len(skills) > 1 else ""))
+                       if x.strip()][:3]
     elif loc_q:  # recruiter targeted a location: make sure every GitHub query respects it
         q["github"] = [x if "location:" in x else (x + loc_q)[:100] for x in q["github"]]
     if not q.get("gitlab"):
@@ -408,8 +413,12 @@ def _run(run):
         cls = ADAPTERS.get(name)
         if not cls or name == "linkedin":
             continue
-        if getattr(cls, "needs_seeds", False) and not seeds:
-            stats[name] = {"found": 0, "notes": ["needs pasted URLs — none given"], "worker": "skipped"}
+        # webpages no longer needs seeds: without pasted URLs the worker finds portfolios
+        # through a normal web search in Chromium. Boards still need board URLs to check.
+        if getattr(cls, "needs_seeds", False) and not seeds and name != "webpages":
+            stats[name] = {"found": 0, "worker": "skipped",
+                           "notes": ["needs pasted Greenhouse/Lever/Ashby board URLs — add them "
+                                     "as seed URLs on the run form"]}
             continue
         stats[name] = {"found": 0, "notes": ["queued for the Chromium worker — it will open this site"],
                        "worker": "pending"}
@@ -437,12 +446,11 @@ def _run(run):
 
 
 def _linkedin_query(role, crit):
-    title = ((crit or {}).get("profile") or role.title or "").strip()
-    tools = ((crit or {}).get("tools") or "").strip()
-    q = f'"{title}"' if " " in title else title
-    if tools:
-        q = f"{q} {tools}"
-    return q[:400]
+    # ONLY the role title goes in the LinkedIn search bar — cramming tools/keywords next
+    # to it (e.g. "Customer Support edesk") returns zero people. The location travels
+    # separately and the worker applies it with LinkedIn's own Locations filter; the
+    # People tab is preselected by the search URL.
+    return ((crit or {}).get("profile") or role.title or "").strip()[:200]
 
 
 def _queue_linkedin(role, crit, cap):
@@ -533,8 +541,10 @@ def claim_browser_job():
     round-robin: pick the active run that has finished the fewest sources so far.
     """
     cfg = current_app.config
+    from datetime import datetime, timedelta
     rows = (WebSourcingRun.query.filter(WebSourcingRun.status.in_(("pending", "running")))
             .order_by(WebSourcingRun.created_at.asc()).all())
+    stale_before = (utcnow() - timedelta(minutes=4)).isoformat()
     choices = []
     for run in rows:
         if not run.queries_json or is_paused(run.role):
@@ -542,15 +552,21 @@ def claim_browser_job():
         stats = dict(run.stats or {})
         pending = [k for k, v in stats.items()
                    if isinstance(v, dict) and v.get("worker") == "pending"]
-        if not pending:
+        # a source claimed >4 min ago that never reported back (worker crash/restart,
+        # failed POST) is offered again instead of sitting on "opening…" forever
+        stale = [k for k, v in stats.items()
+                 if isinstance(v, dict) and v.get("worker") == "running"
+                 and str(v.get("claimed_at") or "") < stale_before]
+        if not pending and not stale:
             continue
         done = sum(1 for v in stats.values() if isinstance(v, dict) and v.get("worker") == "done")
-        choices.append((done, run.created_at, run, pending[0], stats))
+        choices.append((done, run.created_at, run, (pending or stale)[0], stats, bool(pending)))
     if not choices:
         return None
-    _done, _created, run, k, stats = min(choices, key=lambda x: (x[0], x[1], x[2].id))
-    stats[k] = {**stats[k], "worker": "running",
-                "notes": ["Chromium is opening this source…"]}
+    _done, _created, run, k, stats, fresh = min(choices, key=lambda x: (x[0], x[1], x[2].id))
+    stats[k] = {**stats[k], "worker": "running", "claimed_at": utcnow().isoformat(),
+                "notes": ["Chromium is opening this source…" if fresh
+                          else "retrying — the previous browser attempt did not report back"]}
     run.stats_json = _json_set(stats)
     if run.status == "pending":
         run.status = "running"
@@ -619,9 +635,10 @@ def ingest_worker_profiles(role, profiles, channel="linkedin"):
         run.requirements_json = _json_set(req)
     new_ids = []
     for p in profiles:
+        label = "LinkedIn people-search result" if channel == "linkedin" else \
+            f"Found by the browser worker on {channel}"
         ev = [evidence(
-            f"LinkedIn people-search result"
-            + (f": {(p.get('headline') or '')[:120]}" if p.get("headline") else ""),
+            label + (f": {(p.get('headline') or '')[:120]}" if p.get("headline") else ""),
             LIKELY, p.get("profile_url"))]
         cand = candidate(
             channel, p.get("profile_url"), p.get("full_name") or "",
