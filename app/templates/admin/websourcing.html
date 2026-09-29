@@ -6,9 +6,11 @@
   <a class="btn secondary" href="{{ url_for('admin.websourcing_workers') }}">Workers{% if active %} · {{ active }} active{% endif %} →</a>
 </div>
 <p class="muted" style="max-width:760px">
-<strong>Discover</strong> queues work for the headed Chromium worker (<code>python -m worker run</code>).
+<strong>Discover</strong> queues work for the headed Chromium worker on a recruiter PC
+(<code>python -m worker run</code> with <code>APP_URL={{ config.PUBLIC_BASE_URL }}</code>).
 The same window searches <strong>LinkedIn</strong>, then opens GitHub, GitLab, Stack Overflow, Hacker News and YC
-as a normal browser (so Flask’s blocked API calls are not used). Claude scores who fits. Nothing is messaged without your click.
+as a normal browser. Claude scores who fits. Nothing is messaged without your click.
+See <a href="{{ url_for('admin.websourcing_workers') }}">Workers</a> for the exact <code>worker/.env</code> lines.
 </p>
 
 <h2>Start a discovery run</h2>

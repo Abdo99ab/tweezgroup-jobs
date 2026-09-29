@@ -61,9 +61,14 @@
 
 <h2>LinkedIn browser worker</h2>
 <div class="card" style="padding:12px 18px;font-size:14px">
-  <p class="muted" style="margin-top:0;max-width:760px">Discover queues LinkedIn people searches here. Chromium only
-  opens when this worker is running on your PC: <code>python -m worker run</code> (after <code>python -m worker login</code>).
-  Claude scores each profile against the role.</p>
+  <p class="muted" style="margin-top:0;max-width:760px">The app stays on this server. Chromium runs on a recruiter PC
+  (Mehdi): <code>python -m worker login</code> once, then leave <code>python -m worker run</code> open.
+  Discover on this site queues LinkedIn + public sources; the PC browser picks them up. Claude scores each profile.</p>
+  <p style="margin:10px 0 0;font-size:13px"><strong>worker/.env on the PC</strong></p>
+  <pre style="margin:6px 0 0;padding:10px 12px;background:#f4f4f2;border-radius:6px;font-size:12px;overflow:auto">APP_URL={{ config.PUBLIC_BASE_URL }}
+API_KEY=&lt;Render → Environment → API_KEY — must match exactly&gt;</pre>
+  <p class="muted" style="margin:8px 0 0;font-size:13px">Then <code>python -m worker check</code> should print
+  <code>API OK: {{ config.PUBLIC_BASE_URL }}</code> and <code>Mode: remote app</code>.</p>
   {% if worker.paused_until %}<span class="pill rejected">PAUSED</span> <span class="muted">until {{ worker.paused_until[:16].replace('T',' ') }} UTC</span>
   {% else %}<span class="muted">{{ worker.pending_searches }} search(es) queued · {{ worker.due_actions }} action(s) due — also under <a href="{{ url_for('admin.sourcing_home') }}">Sourcing</a>.</span>{% endif %}
   {% if m1 %}

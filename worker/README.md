@@ -25,20 +25,33 @@ worker is deliberately dumb.
 LinkedIn's terms forbid automation; this is a known, accepted risk minimised by the rules above. If it becomes
 unacceptable, keep everything and only replace the send step with ProspectHalo.
 
-## Run on your PC (pilot)
+## Recommended setup: app on Render, worker on your PC
+
+The Flask app stays on [jobs.tweezgroup.com](https://jobs.tweezgroup.com). Only Chromium (LinkedIn login)
+needs to run on a desktop — Mehdi’s PC. The worker polls the live API over HTTPS with `X-API-Key`.
+No VPN, no second Flask process.
 
 ```bash
 cd tweezgroup-jobs
 pip install -r worker/requirements.txt
 playwright install chromium
 cp worker/.env.example worker/.env
-# APP_URL must be the app you click Discover in (http://localhost:8000 locally,
-# or https://jobs.tweezgroup.com on Render) and API_KEY must match that app's .env
-python -m worker login                  # Chromium opens: log into the recruiting LinkedIn account, press Enter
-python -m worker check                  # API reachable? session valid?
-python -m worker run                    # keeps polling; Ctrl+C to stop
-# Discover then drives this same window: LinkedIn people search, then GitHub / GitLab / SO / HN / YC.
+# Edit worker/.env:
+#   APP_URL=https://jobs.tweezgroup.com
+#   API_KEY=<exact value from Render → web service → Environment → API_KEY>
+python -m worker login                  # Chromium: log into the recruiting LinkedIn account, press Enter
+python -m worker check                  # must print API OK + Mode: remote app …
+python -m worker run                    # leave this open; Ctrl+C to stop
 ```
+
+Then open **https://jobs.tweezgroup.com/admin** → Web Sourcing → **Discover**. The same Chromium window
+runs LinkedIn, then GitHub / GitLab / SO / HN / YC. Candidates appear on the live site.
+
+If `check` says **unauthorized**, the key does not match Render’s `API_KEY` (common when someone copied a
+local `.env`). If it hangs or 502s, open the jobs site once in a browser to wake Render free tier, then retry.
+
+**Only for local development:** set `APP_URL=http://localhost:8000` and use the same `API_KEY` as the local
+repo `.env`, and run Flask yourself. Discover and the worker must hit the same app.
 
 Windows: Task Scheduler → *At log on* → `python -m worker run` in the repo folder, "Run only when user is logged
 on" (the browser needs a desktop). The worker idles outside working hours and while paused.
@@ -77,8 +90,8 @@ rather than class names, so they survive most redesigns.
 ## Environment (worker/.env)
 | Var | Default | Meaning |
 |---|---|---|
-| `APP_URL` | http://localhost:8000 | the applicant system |
-| `API_KEY` | — | same value as the app's `API_KEY` |
+| `APP_URL` | https://jobs.tweezgroup.com | live applicant system (use localhost only if Flask is local too) |
+| `API_KEY` | — | same value as that app's `API_KEY` (Render Environment for production) |
 | `LINKEDIN_PROFILE_DIR` | ~/.tweez-linkedin-profile | persistent Chromium profile (the login) |
 | `HEADLESS` | 0 | keep 0 |
 | `POLL_SECONDS` | 300 | idle wait between passes |

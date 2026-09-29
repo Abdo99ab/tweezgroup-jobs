@@ -36,11 +36,20 @@ def cmd_login():
 
 
 def cmd_check():
+    if not config.API_KEY or "paste" in config.API_KEY.lower():
+        print("API ERROR: set API_KEY in worker/.env to the same value as the app "
+              f"(Render Environment when APP_URL={config.APP_URL}).")
+        return 1
+    print("Checking app at", config.APP_URL, "…")
     api = Api()
     try:
         st = api.status()
         print("API OK:", config.APP_URL, "| paused:", st.get("paused_until"), "| caps left:", st["caps"]["left"],
               "| pending searches:", st["pending_searches"], "| due actions:", st["due_actions"])
+        if "localhost" in config.APP_URL or "127.0.0.1" in config.APP_URL:
+            print("NOTE: APP_URL is local — Discover must also be on this same Flask process.")
+        else:
+            print("Mode: remote app (Render) + local Chromium worker — correct for Mehdi's PC.")
     except Exception as exc:
         print("API ERROR:", exc)
         return 1
