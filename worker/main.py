@@ -16,7 +16,11 @@ except ImportError:  # pragma: no cover
 
 
 def within_hours(status, now=None):
-    """status['hours'] like '09:00-18:00' in status['tz']; weekends are off."""
+    """status['hours'] like '09:00-18:00' in status['tz']; weekends are off.
+    Set SOURCING_HOURS=24/7 (or 'always') to run round the clock, weekends included."""
+    hours = (status.get("hours") or "").strip().lower()
+    if hours in ("24/7", "24/24", "7/7", "always"):
+        return True
     tz = ZoneInfo(status.get("tz", "Europe/Paris")) if ZoneInfo else None
     now = now or (datetime.now(tz) if tz else datetime.now())
     if now.weekday() >= 5:

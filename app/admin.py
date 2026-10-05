@@ -730,6 +730,7 @@ def websourcing_workers():
     (with Stop / per-role Pause) and the M1 LinkedIn-worker searches."""
     from . import websourcing
     from .models import WebSourcingRun
+    websourcing.reap_stale_runs()   # finalises stuck STOPPING rows / dead runs on every refresh
     runs = (WebSourcingRun.query.order_by(
         db.case((WebSourcingRun.status.in_(("running", "pending", "stopping")), 0), else_=1),
         WebSourcingRun.created_at.desc()).limit(40).all())

@@ -131,23 +131,64 @@ def set_paused(role, paused):
         stop_role_runs(role)
 
 
+# A live run thread heartbeats every <=8s; no beat for this long means the thread is
+# gone (Flask restart/redeploy) and nobody is left to act on a cooperative stop request.
+_THREAD_DEAD_AFTER_SEC = 30
+
+
+def _last_beat(run):
+    beat = ((run.stats or {}).get("_progress") or {}).get("at")
+    if beat:
+        try:
+            from datetime import datetime
+            ref = datetime.fromisoformat(str(beat))
+            return ref.replace(tzinfo=None) if getattr(ref, "tzinfo", None) else ref
+        except (TypeError, ValueError):
+            pass
+    return run.created_at
+
+
+def _thread_alive(run, now=None):
+    ref = _last_beat(run)
+    return bool(ref) and ((now or utcnow()) - ref).total_seconds() < _THREAD_DEAD_AFTER_SEC
+
+
+def _finalize_stopped(run, now=None):
+    """Close a run out as stopped RIGHT NOW (used when no thread is alive to do it)."""
+    stats = dict(run.stats or {})
+    for k, v in stats.items():
+        if isinstance(v, dict) and v.get("worker") in ("pending", "running"):
+            stats[k] = {**v, "worker": "stopped",
+                        "notes": ["stopped by recruiter before the browser finished this source"]}
+    run.stats_json = _json_set(stats)
+    run.status = "stopped"
+    run.finished_at = now or utcnow()
+
+
 def stop_role_runs(role):
-    """Ask the role's pending/running discovery runs to stop (cooperative — the worker
-    thread checks between sources and every few candidates). Returns how many were asked."""
-    active = (WebSourcingRun.query.filter(WebSourcingRun.role_id == role.id,
-                                          WebSourcingRun.status.in_(("pending", "running")))
-              .all())
+    """Stop the role's discovery runs. A run whose background thread is alive gets the
+    cooperative flag and halts within seconds; a run whose thread is gone (the Flask
+    process restarted since it started) is finalised immediately — Stop must never
+    leave a row sitting on STOPPING. Clicking Stop on a stuck STOPPING row also
+    finalises it. Returns how many runs were stopped."""
+    now = utcnow()
+    active = (WebSourcingRun.query.filter(
+        WebSourcingRun.role_id == role.id,
+        WebSourcingRun.status.in_(("pending", "running", "stopping"))).all())
     n = 0
     ids = []
     for run in active:
-        run.status = "stopping"
         n += 1
         ids.extend(((run.stats or {}).get("linkedin") or {}).get("search_ids") or [])
+        if run.status != "stopping" and _thread_alive(run, now):
+            run.status = "stopping"      # its thread sees this within ~8s
+        else:
+            _finalize_stopped(run, now)  # dead thread or second click: close it now
     if ids:
         (SourcingSearch.query.filter(SourcingSearch.id.in_(ids),
-                                     SourcingSearch.status == "pending")
+                                     SourcingSearch.status.in_(("pending", "running")))
          .update({"status": "error", "error": "stopped by recruiter",
-                  "finished_at": utcnow()}, synchronize_session=False))
+                  "finished_at": now}, synchronize_session=False))
     db.session.commit()
     return n
 
@@ -273,6 +314,15 @@ def reap_stale_runs():
     dirty = False
     for run in WebSourcingRun.query.filter(
             WebSourcingRun.status.in_(("pending", "running", "stopping"))):
+        stopping = run.status == "stopping"
+        if stopping:
+            # The recruiter asked for a stop: if no thread heartbeat for 30s the thread
+            # is dead and nothing will ever flip STOPPING -> STOPPED — do it here.
+            if not _thread_alive(run, now):
+                _finalize_stopped(run, now)
+                dirty = True
+                log.warning("websourcing run %s finalised stopped (thread gone)", run.id)
+            continue
         ids = ((run.stats or {}).get("linkedin") or {}).get("search_ids") or []
         if ids and SourcingSearch.query.filter(
                 SourcingSearch.id.in_(ids),
@@ -281,17 +331,7 @@ def reap_stale_runs():
         if any(isinstance(v, dict) and v.get("worker") in ("pending", "running")
                for v in (run.stats or {}).values()):
             continue  # Chromium still has public sources to visit
-        beat = (run.stats or {}).get("_progress", {}).get("at")
-        ref = None
-        if beat:
-            try:
-                from datetime import datetime
-                ref = datetime.fromisoformat(str(beat))
-                if getattr(ref, "tzinfo", None) is not None:
-                    ref = ref.replace(tzinfo=None)
-            except (TypeError, ValueError):
-                ref = None
-        ref = ref or run.created_at
+        ref = _last_beat(run)
         if ref and (now - ref).total_seconds() > _STALE_AFTER_SEC:
             run.status = "error"
             run.error = ("Discovery worker stopped — the Flask process likely restarted, "

@@ -149,7 +149,7 @@ class Config:
     SOURCING_ACCEPT_WAIT_DAYS = int(os.environ.get("SOURCING_ACCEPT_WAIT_DAYS", "14"))   # give up if not accepted
     SOURCING_REMINDER_DAYS = int(os.environ.get("SOURCING_REMINDER_DAYS", "4"))         # reminder if link not opened
     SOURCING_PAUSE_HOURS = int(os.environ.get("SOURCING_PAUSE_HOURS", "48"))            # after a LinkedIn warning
-    SOURCING_HOURS = os.environ.get("SOURCING_HOURS", "09:00-18:00")                      # worker active window
+    SOURCING_HOURS = os.environ.get("SOURCING_HOURS", "09:00-18:00")                      # worker window; "24/7" = always on, weekends too
     SOURCING_TZ = os.environ.get("SOURCING_TZ", "Europe/Paris")
     SOURCING_MIN_DELAY = int(os.environ.get("SOURCING_MIN_DELAY", "20"))                # seconds between actions
     SOURCING_MAX_DELAY = int(os.environ.get("SOURCING_MAX_DELAY", "90"))
