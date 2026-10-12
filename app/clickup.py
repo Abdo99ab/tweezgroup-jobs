@@ -119,6 +119,9 @@ def _description(applicant):
     ]
     if applicant.cover_note:
         lines += ["", "**Cover note:**", applicant.cover_note]
+    tq = (applicant.role.test_questions or "").strip()
+    if tq:
+        lines += ["", "**Technical test questions:**", tq]
     return "\n".join(lines)
 
 
@@ -193,7 +196,10 @@ def sync_status(applicant):
         return create_task(applicant)
     if applicant.status not in STATUS_MAP:
         return None
-    payload = {"status": STATUS_MAP[applicant.status]}
+    # Refresh the description too, so sections added later (e.g. the technical test
+    # questions) appear on tasks created before the field was filled in.
+    payload = {"status": STATUS_MAP[applicant.status],
+               "markdown_description": _description(applicant)}
     try:
         r = requests.put(f"{API}/task/{applicant.clickup_task_id}", json=payload, headers=_headers(), timeout=15)
         r.raise_for_status()

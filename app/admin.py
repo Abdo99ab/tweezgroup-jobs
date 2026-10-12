@@ -490,7 +490,15 @@ def sourcing_role(slug):
                 flash(f"{n} profile(s) {decision}d." if n else "Nothing selected.", "ok" if n else "error")
         return redirect(url_for("admin.sourcing_role", slug=slug, tab=request.form.get("tab", "shortlist")))
 
+    # Location filter: ?loc=Algeria keeps only profiles whose stored location mentions it.
+    loc = (request.args.get("loc") or "").strip()
+    all_locs = [l[0] for l in role.sourced_profiles.with_entities(SourcedProfile.location)
+                .filter(SourcedProfile.location.isnot(None)).distinct().all()]
+    countries = sorted({seg for l in all_locs if l
+                        for seg in [l.split(",")[-1].strip().title()] if seg})
     base = role.sourced_profiles
+    if loc:
+        base = base.filter(SourcedProfile.location.ilike(f"%{loc}%"))
     shortlist = base.filter_by(decision="pending").order_by(SourcedProfile.pre_score.desc().nullslast(),
                                                              SourcedProfile.created_at.desc()).limit(300).all()
     queue = base.filter(SourcedProfile.decision == "approved", SourcedProfile.closed_at.is_(None),
@@ -502,7 +510,7 @@ def sourcing_role(slug):
     web_total = role.web_candidates.count()
     web_new = role.web_candidates.filter_by(status="new").count()
     return render_template("admin/sourcing_role.html", role=role, shortlist=shortlist, queue=queue,
-                           web_total=web_total, web_new=web_new,
+                           web_total=web_total, web_new=web_new, loc=loc, countries=countries,
                            contacted=contacted, searches=searches, funnel=sourcing.funnel(role),
                            stages=sourcing.FUNNEL_STAGES, tab=request.args.get("tab", "shortlist"),
                            status=sourcing.worker_status(), channels=CHANNELS, channel_labels=CHANNEL_LABELS,
@@ -595,6 +603,11 @@ def websourcing_run():
     from . import websourcing
     role = Role.query.get_or_404(int(request.form.get("role_id", 0)))
     sources = request.form.getlist("sources") or None
+    # The discovery form starts with every source UNCHECKED — the recruiter picks the
+    # platforms per run. Submitting it with none selected is a mistake, not "run all".
+    if sources is None and request.form.get("from_form"):
+        flash("Pick at least one source to search before launching the discovery run.", "error")
+        return redirect(request.referrer or url_for("admin.websourcing_home"))
     criteria = {k: request.form.get(k, "").strip()
                 for k in ("location", "profile", "tools", "languages")}
     years = request.form.get("min_years", "").strip()

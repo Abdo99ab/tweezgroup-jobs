@@ -16,16 +16,17 @@ See <a href="{{ url_for('admin.websourcing_workers') }}">Workers</a> for the exa
 <h2>Start a discovery run</h2>
 <div class="card" style="padding:16px 18px">
 <form method="post" action="{{ url_for('admin.websourcing_run') }}">
+  <input type="hidden" name="from_form" value="1">
   <div class="row" style="gap:14px;flex-wrap:wrap;align-items:flex-end">
     <label>Role<br>
       <select name="role_id" required style="min-width:260px">
         {% for r in roles %}<option value="{{ r.id }}">{{ r.title }}{{ '' if r.is_open else ' (paused)' }}</option>{% endfor %}
       </select></label>
     <div>
-      <span class="muted" style="font-size:13px">Sources</span><br>
+      <span class="muted" style="font-size:13px">Sources <span style="font-weight:400">(pick the platforms for THIS run — none are preselected)</span></span><br>
       {% for name, a in adapters.items() %}
       <label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:14px">
-        <input type="checkbox" name="sources" value="{{ name }}" {{ 'checked' if name in enabled }}> {{ a.label }}</label>
+        <input type="checkbox" name="sources" value="{{ name }}"> {{ a.label }}</label>
       {% endfor %}
     </div>
   </div>

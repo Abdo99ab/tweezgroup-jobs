@@ -198,9 +198,14 @@ class LinkedIn:
         () => {
           const anchors = Array.from(document.querySelectorAll('a[href*="/in/"]'));
           const cards = new Map();
+          const taken = new Set();  // result cards already paired with their own profile link
           for (const a of anchors) {
             const href = a.href.split('?')[0];
             if (!/linkedin\\.com\\/in\\//.test(href)) continue;
+            // Skip profile links that are NOT the candidate's own: the "mutual
+            // connections" / shared-highlight strip inside a card links to OTHER
+            // people's /in/ pages, which used to get saved under this card's name.
+            if (a.closest('[class*="insight"], [class*="simple-insight"], [class*="shared-connections"]')) continue;
             let el = a;
             for (let i = 0; i < 8 && el; i++) {
               el = el.parentElement;
@@ -208,7 +213,8 @@ class LinkedIn:
               if (el.tagName === 'LI' || el.getAttribute('data-chameleon-result-urn') ||
                   (el.getAttribute('data-view-name') || '').includes('search-entity-result')) break;
             }
-            if (!el || cards.has(href)) continue;
+            if (!el || taken.has(el) || cards.has(href)) continue;
+            taken.add(el);  // ONE link per card — the first /in/ anchor is the person's own
             const text = (el.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
             if (text.length) cards.set(href, text);
           }
@@ -258,8 +264,39 @@ class LinkedIn:
             return "connected"
         return "unknown"
 
-    def connect(self, profile_url, note):
+    def profile_name_matches(self, expected):
+        """Compare the name shown on the OPEN profile page with the candidate we think it is.
+
+        Safety net for rows saved with the wrong URL (e.g. a mutual-connection link):
+        if the page's name shares no word with the expected name, the send is skipped.
+        Conservative on purpose — an unreadable page or empty h1 never blocks a send."""
+        if not expected or not str(expected).strip():
+            return True, ""
+        try:
+            shown = self.page.evaluate("() => (document.querySelector('h1') || {}).innerText || ''") or ""
+        except Exception:
+            return True, ""
+        shown = shown.strip()
+        if not shown:
+            return True, ""
+        import unicodedata
+
+        def toks(s):
+            s = unicodedata.normalize("NFKD", str(s))
+            s = "".join(c for c in s if not unicodedata.combining(c))
+            return {t for t in re.split(r"[^a-z]+", s.lower()) if len(t) > 1}
+
+        a, b = toks(expected), toks(shown)
+        if not a or not b:
+            return True, shown
+        return bool(a & b), shown
+
+    def connect(self, profile_url, note, expected_name=None):
         self.goto(profile_url)
+        ok, shown = self.profile_name_matches(expected_name)
+        if not ok:
+            return False, (f"profile mismatch — the page is “{shown[:60]}” but this candidate is "
+                           f"“{str(expected_name)[:60]}”; nothing sent, check the profile link")
         state = self.connection_state()
         if state == "pending":
             return True, "invitation already pending"
@@ -304,8 +341,12 @@ class LinkedIn:
         state = self.connection_state()
         return state == "connected"
 
-    def message(self, profile_url, text):
+    def message(self, profile_url, text, expected_name=None):
         self.goto(profile_url)
+        ok, shown = self.profile_name_matches(expected_name)
+        if not ok:
+            return False, (f"profile mismatch — the page is “{shown[:60]}” but this candidate is "
+                           f"“{str(expected_name)[:60]}”; nothing sent, check the profile link")
         btn = self._first(BTN_MESSAGE, 3000)
         if btn is None:
             return False, "no Message button (not connected yet?)"

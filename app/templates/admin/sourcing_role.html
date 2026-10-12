@@ -21,11 +21,21 @@
   {% for s in stages %}<div class="stat"><div class="n">{{ tot[s] }}</div><div class="l">{{ s.replace('_',' ') }}</div></div>{% endfor %}
 </div>
 
-<div class="row" style="margin:22px 0 10px">
+<div class="row" style="margin:22px 0 10px;align-items:center;flex-wrap:wrap">
   {% for t, lab, n in [('shortlist','To review', shortlist|length), ('queue','Outreach queue', queue|length), ('contacted','All approved', contacted|length), ('searches','Searches', searches|length)] %}
-  <a class="btn small {{ 'secondary' if tab != t }}" href="{{ url_for('admin.sourcing_role', slug=role.slug, tab=t) }}">{{ lab }} ({{ n }})</a>
+  <a class="btn small {{ 'secondary' if tab != t }}" href="{{ url_for('admin.sourcing_role', slug=role.slug, tab=t, loc=loc or None) }}">{{ lab }} ({{ n }})</a>
   {% endfor %}
+  <form method="get" class="row" style="gap:6px;align-items:center;margin-left:auto">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <label class="muted" style="font-size:13px" for="locsel">Location</label>
+    <select id="locsel" name="loc" onchange="this.form.submit()" style="min-width:160px">
+      <option value="">All countries</option>
+      {% for c in countries %}<option value="{{ c }}" {{ 'selected' if loc and loc|lower == c|lower }}>{{ c }}</option>{% endfor %}
+    </select>
+    {% if loc %}<a class="btn small secondary" href="{{ url_for('admin.sourcing_role', slug=role.slug, tab=tab) }}">Clear</a>{% endif %}
+  </form>
 </div>
+{% if loc %}<p class="muted" style="margin:0 0 10px;font-size:13px">Showing only profiles whose location mentions “{{ loc }}” — counts above reflect the filter.</p>{% endif %}
 
 {% if tab == 'shortlist' %}
 <form method="post"><input type="hidden" name="action" value="decide"><input type="hidden" name="tab" value="shortlist">

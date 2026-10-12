@@ -67,14 +67,14 @@ class FakeLinkedIn:
         return [{"profile_url": f"https://www.linkedin.com/in/p{i}", "full_name": f"Person {i}",
                  "headline": "B2B sales", "location": "Paris"} for i in range(3)]
 
-    def connect(self, url, note):
+    def connect(self, url, note, expected_name=None):
         self.log.append(("connect", url, note))
         return True, "invitation sent"
 
     def is_connected(self, url):
         return url in self.connected
 
-    def message(self, url, text):
+    def message(self, url, text, expected_name=None):
         if self.warn_on_message:
             raise Warning_("checkpoint")
         self.log.append(("message", url, text))

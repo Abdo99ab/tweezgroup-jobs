@@ -158,14 +158,14 @@ class Worker:
             log.info("%s -> %s (%s)", action, a.get("full_name"), url)
             try:
                 if action == "connect":
-                    ok, detail = self.li.connect(url, text)
+                    ok, detail = self.li.connect(url, text, a.get("full_name"))
                     self.api.outcome(pid, "connect", ok=ok, detail=detail)
                 elif action == "check_accept":
                     accepted = self.li.is_connected(url)
                     self.api.outcome(pid, "check_accept", ok=True, accepted=accepted,
                                      detail="connected" if accepted else "not yet")
                 elif action in ("message", "reminder"):
-                    ok, detail = self.li.message(url, text)
+                    ok, detail = self.li.message(url, text, a.get("full_name"))
                     self.api.outcome(pid, action, ok=ok, detail=detail)
                 else:
                     self.api.outcome(pid, action, ok=False, detail="unknown action")

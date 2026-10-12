@@ -165,11 +165,11 @@ def test_invitation(applicant, test_url):
 
 Thank you for applying for the {applicant.role.title} position at {company}. We were impressed by your profile, and the next step is a short written technical test.
 
-Complete it online here (one submission only, at your convenience):
+Complete it online here (one submission only):
 
 {test_url}
 
-There is no strict time limit; take the time to give thoughtful answers, in English or French as you prefer.
+You have 48 hours from receiving this email to return the test. Take the time to give thoughtful answers, in English or French as you prefer.
 
 Good luck!
 The {company} recruitment team
