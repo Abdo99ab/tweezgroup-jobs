@@ -101,6 +101,10 @@ class Config:
     # People, by ClickUp display name or email; resolved to user ids at runtime via GET /team
     CLICKUP_ASSIGNEE = os.environ.get("CLICKUP_ASSIGNEE", "Mehdi Mahcene")
     CLICKUP_MENTIONS = os.environ.get("CLICKUP_MENTIONS", "Abderrahmane Hammia")
+    # People @-tagged in a ClickUp comment when an applicant reaches a watched status,
+    # and the statuses (our slugs) that trigger it.
+    CLICKUP_STATUS_MENTIONS = os.environ.get("CLICKUP_STATUS_MENTIONS", "Taoufik Mousselmal,Ahmidou")
+    CLICKUP_STATUS_MENTION_ON = os.environ.get("CLICKUP_STATUS_MENTION_ON", "test_returned,interview_done")
 
     # --- CV auto-summary (Claude) ---
     ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")

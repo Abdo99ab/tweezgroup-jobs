@@ -204,9 +204,32 @@ def sync_status(applicant):
         r = requests.put(f"{API}/task/{applicant.clickup_task_id}", json=payload, headers=_headers(), timeout=15)
         r.raise_for_status()
         log_event(applicant, "clickup_synced", f"Status -> {STATUS_MAP[applicant.status]}")
+        _notify_status_watchers(applicant)
     except Exception as exc:
         log.warning("ClickUp status update failed: %s", exc)
         log_event(applicant, "error", f"ClickUp status update failed: {exc}")
+
+
+def _notify_status_watchers(applicant):
+    """@-tag CLICKUP_STATUS_MENTIONS when an applicant reaches a watched status
+    (CLICKUP_STATUS_MENTION_ON, default TEST RETURNED and INTERVIEW DONE).
+    Posted at most once per applicant per status, however often the sync re-runs."""
+    from .models import Event
+    cfg = current_app.config
+    watched = {s.strip() for s in cfg["CLICKUP_STATUS_MENTION_ON"].split(",") if s.strip()}
+    names = [n.strip() for n in cfg["CLICKUP_STATUS_MENTIONS"].split(",") if n.strip()]
+    if applicant.status not in watched or not names:
+        return
+    label = STATUS_MAP.get(applicant.status, applicant.status)
+    marker = f"{label} notification"
+    if Event.query.filter(Event.applicant_id == applicant.id, Event.kind == "clickup_synced",
+                          Event.message.like(f"{marker}%")).count():
+        return  # already pinged for this status
+    admin_url = f"{cfg['PUBLIC_BASE_URL']}/admin/applicants/{applicant.public_id}"
+    post_comment(applicant,
+                 f"{applicant.full_name} — {applicant.role.title} moved to {label}. "
+                 f"Your review is needed: {admin_url}",
+                 tag_names=names, label=marker)
 
 
 update_task_status = sync_status  # backwards-compatible alias
@@ -222,8 +245,9 @@ def status_from_clickup(name):
     return REVERSE_STATUS_MAP.get((name or "").strip().lower())
 
 
-def post_comment(applicant, text, mentions=True, label="Summary comment"):
-    """Post a comment on the applicant's task. With mentions=True the configured people are @-tagged.
+def post_comment(applicant, text, mentions=True, label="Summary comment", tag_names=None):
+    """Post a comment on the applicant's task. With mentions=True the configured people are @-tagged;
+    tag_names overrides WHO gets tagged (list of names/emails resolved against the workspace).
 
     ClickUp's rich comment format (`comment` array with type=tag items) renders real mentions; if the
     API rejects it we fall back to plain text so the summary is never lost.
@@ -231,7 +255,8 @@ def post_comment(applicant, text, mentions=True, label="Summary comment"):
     if not _enabled() or not applicant.clickup_task_id:
         return None
     url = f"{API}/task/{applicant.clickup_task_id}/comment"
-    tagged = [(n, uid) for n, uid in mention_ids() if uid] if mentions else []
+    who = [(n, resolve_user(n)) for n in tag_names] if tag_names is not None else mention_ids()
+    tagged = [(n, uid) for n, uid in who if uid] if mentions else []
     try:
         if tagged:
             parts = [{"text": text + "\n\ncc "}]
