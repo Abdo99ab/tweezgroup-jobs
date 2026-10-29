@@ -14,7 +14,9 @@
       <dt>Role</dt><dd>{{ a.role.title }}</dd>
       <dt>Email</dt><dd><a href="mailto:{{ a.email }}">{{ a.email }}</a></dd>
       <dt>Phone</dt><dd>{{ a.phone or '–' }}</dd>
-      <dt>LinkedIn</dt><dd>{% if a.linkedin_url %}<a href="{{ a.linkedin_url }}" target="_blank">{{ a.linkedin_url }}</a>{% else %}–{% endif %}</dd>
+      <dt>LinkedIn</dt><dd>{% if a.linkedin_url %}<a href="{{ a.linkedin_url }}" target="_blank">{{ a.linkedin_url }}</a>{% else %}–{% endif %}
+        {% if a.linkedin_url or a.source == 'linkedin' %}{% set ck = a.linkedin_url|li_check(a.full_name) %}<br>
+        <span class="pill {{ {'ok':'hired','check':'test_returned'}.get(ck.state, 'rejected') }}" style="font-size:11px" title="{{ ck.reason }}">{{ {'ok':'✓ link verified','check':'⚠ confirm link'}.get(ck.state, '✗ not a profile link') }}</span>{% endif %}</dd>
       <dt>Location</dt><dd>{{ a.location or '–' }}</dd>
       <dt>Experience</dt><dd>{{ a.years_experience ~ ' years' if a.years_experience is not none else '–' }}</dd>
       <dt>Source</dt><dd>{{ a.source }}</dd>

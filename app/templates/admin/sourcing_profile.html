@@ -24,8 +24,8 @@
     {% if p.decision == 'approved' and not p.closed_at and p.email %}<button class="btn small" name="action" value="email">Email the link{{ ' (reminder)' if p.message_sent_at }}</button>{% endif %}
     {% if p.next_action and p.released %}<button class="btn small secondary" name="action" value="hold">Hold</button>{% endif %}
     {% if not p.applicant %}<button class="btn small secondary" name="action" value="promote"
-      title="Create an application with status FILTRED APPLICATION — shows on the Dashboard, under Applicants and on ClickUp"
-      onclick="return confirm('Add {{ p.full_name }} to Applicants as FILTRED APPLICATION?')">Add to Applicants (Filtered)</button>{% endif %}
+      title="Create an application with status FILTERED SOURCED — shows on the Dashboard, under Applicants and on ClickUp"
+      onclick="return confirm('Add {{ p.full_name }} to Applicants as FILTERED SOURCED?')">Add to Applicants (Filtered sourced)</button>{% endif %}
     {% if p.decision != 'rejected' %}<button class="btn small danger" name="action" value="reject">Reject / stop</button>{% endif %}
     {% if p.pre_score is none %}<button class="btn small secondary" name="action" value="prescore">Pre-score now</button>{% endif %}
   </form>

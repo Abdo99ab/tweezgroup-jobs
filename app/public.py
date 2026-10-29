@@ -59,7 +59,15 @@ def _sourced(token):
 @bp.get("/r/<token>")
 def sourced_link(token):
     """Short personalised link sent to sourced candidates: records the open, pre-fills the form."""
-    p = SourcedProfile.query.filter_by(apply_token=token).first_or_404()
+    p = SourcedProfile.query.filter_by(apply_token=token).first()
+    if p is None:
+        # Link from a LinkedIn message written on the Web Sourcing page: the candidate's first click
+        # moves them into the outreach pipeline, so the open and the application are tracked.
+        from . import websourcing
+        from .models import WebCandidate
+        c = WebCandidate.query.filter_by(apply_token=token).first_or_404()
+        p = websourcing.move_to_outreach(c, actor="candidate")
+        token = p.apply_token
     sourcing.on_link_opened(p)
     return redirect(url_for("public.apply", slug=p.role.slug, t=token))
 

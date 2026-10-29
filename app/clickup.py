@@ -9,6 +9,8 @@ import logging
 import os
 import threading
 
+from urllib.parse import quote
+
 import requests
 from flask import current_app
 
@@ -19,6 +21,7 @@ API = os.environ.get("CLICKUP_API_BASE", "https://api.clickup.com/api/v2")
 
 # Our status slug -> exact status name in the ClickUp recruiting lists.
 STATUS_MAP = {
+    "filtered_sourced": "FILTERED SOURCED",   # sourced profiles promoted to applicants (+ tag CLICKUP_SOURCED_TAG)
     "filtered": "FILTRED APPLICATION",
     "selected": "SELECTED/ IN PROGRESS",
     "test_sent": "TEST SENT",
@@ -44,6 +47,47 @@ def _enabled():
 
 def _list_id_for(applicant):
     return applicant.role.clickup_list_id or current_app.config["CLICKUP_LIST_ID"]
+
+
+def is_sourced(applicant):
+    """True when the applicant came from sourcing (a sourced profile is linked to them, or the
+    record still carries the no-email placeholder / FILTERED SOURCED status)."""
+    from .models import SourcedProfile
+    if applicant.status == "filtered_sourced" or (applicant.email or "").endswith("@sourced.local"):
+        return True
+    if applicant.id is None:
+        return False
+    return SourcedProfile.query.filter_by(applicant_id=applicant.id).first() is not None
+
+
+def _tags_for(applicant):
+    tags = ["applicant", applicant.role.slug]
+    sourced_tag = current_app.config.get("CLICKUP_SOURCED_TAG")
+    if sourced_tag and is_sourced(applicant):
+        tags.append(sourced_tag)
+    return tags
+
+
+def ensure_sourced_tag(applicant):
+    """Add CLICKUP_SOURCED_TAG to an existing task of a sourced applicant (once). Never raises."""
+    tag = current_app.config.get("CLICKUP_SOURCED_TAG")
+    if not (tag and _enabled() and applicant.clickup_task_id and is_sourced(applicant)):
+        return None
+    from .models import Event
+    marker = f"Tag '{tag}' added"
+    if Event.query.filter(Event.applicant_id == applicant.id, Event.kind == "clickup_synced",
+                          Event.message == marker).count():
+        return None
+    try:
+        r = requests.post(f"{API}/task/{applicant.clickup_task_id}/tag/{quote(tag, safe='')}",
+                          headers=_headers(), timeout=15)
+        r.raise_for_status()
+        log_event(applicant, "clickup_synced", marker)
+        return True
+    except Exception as exc:
+        log.warning("ClickUp tag failed: %s", exc)
+        log_event(applicant, "error", f"ClickUp tag '{tag}' failed: {exc}")
+        return None
 
 
 # ---------------------------------------------------------------------------------------- people
@@ -138,7 +182,7 @@ def create_task(applicant, force=False):
     payload = {
         "name": f"{applicant.full_name} — {applicant.role.title}",
         "markdown_description": _description(applicant),
-        "tags": ["applicant", applicant.role.slug],
+        "tags": _tags_for(applicant),
         "notify_all": True,
     }
     if applicant.status in STATUS_MAP:
@@ -157,7 +201,15 @@ def create_task(applicant, force=False):
         applicant.clickup_task_id = data.get("id")
         applicant.clickup_task_url = data.get("url")
         who = f", assigned to {current_app.config['CLICKUP_ASSIGNEE']}" if a_id else ", assignee not found"
-        log_event(applicant, "clickup_synced", f"Task {applicant.clickup_task_id} created in list {list_id}{who}")
+        landed = data.get("status", {}).get("status") if isinstance(data.get("status"), dict) else None
+        where = f" in {landed.upper()}" if landed else ""
+        log_event(applicant, "clickup_synced", f"Task {applicant.clickup_task_id} created in list {list_id}{where}{who}")
+        tag = current_app.config.get("CLICKUP_SOURCED_TAG")
+        if tag and tag in payload["tags"]:
+            log_event(applicant, "clickup_synced", f"Tag '{tag}' added")
+        if "status" not in payload and applicant.status == "filtered_sourced":
+            log_event(applicant, "error", "ClickUp list has no 'FILTERED SOURCED' status yet — task landed in "
+                                          "the default column; add the status on the board, then use Re-run sync")
         return data
     except Exception as exc:
         log.warning("ClickUp task creation failed: %s", exc)
@@ -204,6 +256,7 @@ def sync_status(applicant):
         r = requests.put(f"{API}/task/{applicant.clickup_task_id}", json=payload, headers=_headers(), timeout=15)
         r.raise_for_status()
         log_event(applicant, "clickup_synced", f"Status -> {STATUS_MAP[applicant.status]}")
+        ensure_sourced_tag(applicant)
         _notify_status_watchers(applicant)
     except Exception as exc:
         log.warning("ClickUp status update failed: %s", exc)

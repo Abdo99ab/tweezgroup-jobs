@@ -10,7 +10,12 @@
   </span>
   <span><strong>Today:</strong> <span class="muted">{{ status.caps.used.connect }}/{{ status.caps.limits.connect }} invites · {{ status.caps.used.message }}/{{ status.caps.limits.message }} messages · {{ status.caps.used.view }}/{{ status.caps.limits.view }} profile visits{% if status.caps.warmup %} · warm-up (half caps){% endif %}</span></span>
   <span><strong>Waiting:</strong> <span class="muted">{{ status.pending_searches }} search(es) · {{ status.due_actions }} action(s) due</span></span>
-  <form method="post" action="{{ url_for('admin.sourcing_pause') }}" style="margin-left:auto">
+  <form method="post" action="{{ url_for('admin.sourcing_backfill_filtered_sourced') }}" style="margin-left:auto">
+    <button class="btn small secondary" type="submit"
+      title="Applicants added from sourcing before the FILTERED SOURCED status existed (no CV yet) are moved there and tagged on ClickUp"
+      onclick="return confirm('Move sourced applicants with no CV from Filtered application to Filtered sourced (and tag them on ClickUp)?')">Move sourced to Filtered sourced</button>
+  </form>
+  <form method="post" action="{{ url_for('admin.sourcing_pause') }}">
     {% if status.paused_until %}<input type="hidden" name="resume" value="1"><button class="btn small" type="submit">Resume</button>
     {% else %}<button class="btn small danger" type="submit">Pause 48 h</button>{% endif %}
   </form>

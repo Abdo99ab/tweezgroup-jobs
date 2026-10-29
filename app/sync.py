@@ -107,6 +107,11 @@ def reconcile_once(app, limit=40):
             slug = clickup.status_from_clickup(name)
             if not slug or slug == a.status:
                 continue
+            if a.status == "filtered_sourced" and slug == "filtered":
+                # A list without the FILTERED SOURCED column puts the task in its first column
+                # (FILTRED APPLICATION). Don't let that quietly undo the sourced status; a real move
+                # made on the board still arrives instantly through the webhook.
+                continue
             if _app_changed_recently(a):
                 clickup.sync_status(a)   # our change didn't land on the board yet -> push again
                 out["pushed"] += 1

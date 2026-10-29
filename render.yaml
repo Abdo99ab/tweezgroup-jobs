@@ -50,8 +50,10 @@ services:
         value: Mehdi Mahcene
       - key: CLICKUP_MENTIONS
         value: Abderrahmane Hammia
-      - key: CLICKUP_STATUS_MENTIONS
-        value: Taoufik Mousselmal,Ahmidou
+      - key: CLICKUP_SOURCED_TAG
+        value: filtered sourced
+      - key: CLICKUP_STATUS_MENTIONS   # empty = OFF (reviewers are tagged by hand on ClickUp)
+        value: ""
       - key: CLICKUP_STATUS_MENTION_ON
         value: test_returned,interview_done
       - key: AUTO_STATUS_ENABLED

@@ -25,8 +25,8 @@
     <button class="btn secondary" name="action" value="outreach"
       onclick="return confirm('Move {{ c.full_name }} to the outreach pipeline? A draft is prepared but nothing is sent without your click.')">Move to outreach</button>
     <button class="btn secondary" name="action" value="applicant"
-      title="Create an application with status FILTRED APPLICATION — shows on the Dashboard, under Applicants and on ClickUp"
-      onclick="return confirm('Add {{ c.full_name }} to Applicants as FILTRED APPLICATION?')">Add to Applicants (Filtered)</button>
+      title="Create an application with status FILTERED SOURCED — shows on the Dashboard, under Applicants and on ClickUp"
+      onclick="return confirm('Add {{ c.full_name }} to Applicants as FILTERED SOURCED?')">Add to Applicants (Filtered sourced)</button>
     <button class="btn danger" name="action" value="dismiss">Dismiss</button>
     {% elif c.status == 'dismissed' %}<button class="btn secondary" name="action" value="restore">Restore</button>{% endif %}
   </form>

@@ -163,7 +163,10 @@ def candidate(source, profile_url, full_name, *, headline=None, location=None, c
               email=None, website=None, skills=None, languages=None, projects=None,
               evidence_items=None, raw=None):
     """The one normalized structure every adapter returns."""
+    from ..linkedin_links import clean_name, normalize as li_normalize
     profile_url = clean_url(profile_url)
+    profile_url = li_normalize(profile_url) or profile_url   # canonical /in/<slug> for LinkedIn
+    full_name = clean_name(full_name or "")                   # "Asma ADJOURI • 2nd" -> "Asma ADJOURI"
     if not profile_url or not (full_name or "").strip():
         return None
     return {

@@ -304,7 +304,7 @@ def resend_test(applicant):
     """Admin button: (re)send the test email now (cancels any scheduled delay). Returns (sent, url, err)."""
     applicant.test_due_at = None
     sent, url, err = send_test(applicant)
-    if sent and applicant.status in ("new", "filtered", "selected"):
+    if sent and applicant.status in ("new", "filtered_sourced", "filtered", "selected"):
         old = applicant.status
         applicant.status = "test_sent"
         log_event(applicant, "status_changed", f"{old} -> test_sent (test sent from admin)", actor="admin")

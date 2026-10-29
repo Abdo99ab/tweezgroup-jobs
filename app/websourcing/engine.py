@@ -959,12 +959,29 @@ def send_email(cand, subject, body, actor="admin"):
 def move_to_outreach(cand, actor="admin"):
     """Recruiter-approved: hand the candidate to the existing outreach pipeline (no email
     is sent unless the recruiter uses the outreach screens to send one)."""
-    from .. import sourcing
+    from .. import linkedin_links, sourcing
+    from .linkedin_outreach import apply_sent_state
+    if cand.sourced_profile_id:
+        existing = db.session.get(SourcedProfile, cand.sourced_profile_id)
+        if existing is not None:
+            return existing
+    # The LinkedIn profile wins over a portfolio/GitHub "website" (that choice used to save
+    # LinkedIn-found people under the wrong link). LinkedIn people go to the LinkedIn channel so the
+    # outreach queue, the worker's name check and the inbox matching all use the /in/ URL.
+    found = cand.linkedin_candidates
+    li_url = found[0] if found else None
     profile, _ = sourcing.add_manual(
-        cand.role, cand.full_name, profile_url=cand.website or cand.profile_url,
-        email=cand.email, channel="manual", headline=cand.headline, location=cand.location,
-        actor=actor, send_email=False)
+        cand.role, linkedin_links.clean_name(cand.full_name),
+        profile_url=li_url or cand.profile_url or cand.website,
+        email=cand.email, channel="linkedin" if li_url else "manual",
+        headline=cand.headline, location=cand.location, actor=actor, send_email=False)
     profile.about = (profile.about or "") or cand.match_reason
+    # The texts the recruiter reviewed on the discovered-candidates page become the outreach drafts.
+    if cand.li_note:
+        profile.draft_note = cand.li_note[:300]
+    if cand.li_message:
+        profile.draft_message = cand.li_message.replace("{apply_url}", sourcing.apply_url(profile))
+    apply_sent_state(profile, cand)
     cand.status = "moved"
     cand.sourced_profile_id = profile.id
     db.session.commit()

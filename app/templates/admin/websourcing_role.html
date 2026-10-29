@@ -63,20 +63,46 @@
     {% for c in ('high','medium','low') %}<option value="{{ c }}" {{ 'selected' if f.confidence == c }}>{{ c }}</option>{% endfor %}</select></label>
   <label>Status<br><select name="status"><option value="">all active</option>
     {% for s in ('new','shortlisted','dismissed','moved') %}<option value="{{ s }}" {{ 'selected' if f.status == s }}>{{ s }}</option>{% endfor %}</select></label>
+  <label>LinkedIn<br><select name="li"><option value="">all</option>
+    {% for v, t in (('ok','link verified'),('check','link to confirm'),('missing','no profile link'),('none','no messages yet'),('ready','messages ready'),('sent','sent')) %}<option value="{{ v }}" {{ 'selected' if f.li == v }}>{{ t }}</option>{% endfor %}</select></label>
   <button class="btn small" type="submit">Filter</button>
   <a class="btn small secondary" href="{{ url_for('admin.websourcing_role', slug=role.slug) }}">Clear</a>
 </form>
 
-<table><tr><th>Score</th><th>Candidate</th><th>Matching criteria</th><th>Missing</th><th>Source(s)</th><th>Found</th><th></th></tr>
-{% for c in rows if c.status != 'dismissed' or f.status == 'dismissed' %}<tr>
+<div class="card li-bar">
+  <strong>LinkedIn reach-out</strong>
+  {% set fl = request.args.to_dict() %}
+  <a href="{{ url_for('admin.websourcing_role', slug=role.slug, **dict(fl, li='ok')) }}"><span class="pill hired">✓ {{ li_summary.ok or 0 }} link verified</span></a>
+  <a href="{{ url_for('admin.websourcing_role', slug=role.slug, **dict(fl, li='check')) }}"><span class="pill test_returned">⚠ {{ li_summary.check or 0 }} to confirm</span></a>
+  <a href="{{ url_for('admin.websourcing_role', slug=role.slug, **dict(fl, li='missing')) }}"><span class="pill rejected">✗ {{ li_summary.missing or 0 }} no profile link</span></a>
+  <a href="{{ url_for('admin.websourcing_role', slug=role.slug, **dict(fl, li='ready')) }}"><span class="pill selected">✉ {{ li_summary.ready or 0 }} ready to send</span></a>
+  <a href="{{ url_for('admin.websourcing_role', slug=role.slug, **dict(fl, li='sent')) }}"><span class="pill filtered">{{ li_summary.sent or 0 }} sent</span></a>
+  <span class="row" style="gap:6px;margin-left:auto;flex-wrap:nowrap">
+    <form method="post" action="{{ url_for('admin.websourcing_linkedin_generate', slug=role.slug) }}">
+      <input type="hidden" name="next" value="{{ request.full_path }}"><input type="hidden" name="limit" value="25">
+      <button class="btn small" type="submit" title="Connection note + InMail subject + DM for the 25 best-scored new/shortlisted candidates that have none yet. Nothing is sent.">Write LinkedIn messages</button></form>
+    <form method="post" action="{{ url_for('admin.websourcing_fix_links', slug=role.slug) }}">
+      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <button class="btn small secondary" type="submit" title="Normalise every stored LinkedIn link to https://www.linkedin.com/in/…, compare it with the name, and strip '• 2nd' from names">Re-check links</button></form>
+  </span>
+</div>
+
+<table class="wsr"><tr><th>Score</th><th>Candidate</th><th>Matching criteria</th><th>Missing</th><th>Source(s)</th><th>LinkedIn</th><th>Found</th><th></th></tr>
+{% for c in rows if c.status != 'dismissed' or f.status == 'dismissed' %}{% set ck = checks[c.id] %}<tr class="main">
   <td><span class="score" style="font-size:17px;font-weight:700">{{ c.match_score if c.match_score is not none else '–' }}</span><br>
       <span class="muted" style="font-size:12px">{{ c.confidence or '' }}</span></td>
-  <td style="max-width:230px"><a href="{{ url_for('admin.websourcing_candidate', cid=c.id) }}"><strong>{{ c.full_name }}</strong></a>
+  <td style="max-width:230px"><a href="{{ url_for('admin.websourcing_candidate', cid=c.id) }}"><strong>{{ c.full_name|clean_name }}</strong></a>
       {% if c.status != 'new' %} <span class="pill {{ 'hired' if c.status=='shortlisted' else ('selected' if c.status=='moved' else 'rejected') }}">{{ c.status|upper }}</span>{% endif %}<br>
-      <span class="muted" style="font-size:13px">{{ (c.headline or '')[:90] }}{% if c.location %} · {{ c.location }}{% endif %}</span></td>
+      <span class="muted" style="font-size:13px">{{ (c.headline or '')[:90] }}{% if c.location %} · {{ c.location }}{% endif %}</span>
+      {% if c.id in dup_ids %}<br><span class="pill test_returned" title="Two rows share this name — usually one of them was saved under someone else's link. Compare the LinkedIn links before sending.">same name twice</span>{% endif %}</td>
   <td style="max-width:260px;font-size:13px">{% for m in c.matched[:3] %}✓ {{ m }}<br>{% endfor %}</td>
   <td style="max-width:180px;font-size:13px" class="muted">{% for m in c.missing[:2] %}? {{ m }}<br>{% endfor %}</td>
   <td style="font-size:13px">{% for s in c.sources %}<a href="{{ s.url }}" target="_blank" rel="noopener">{{ adapters[s.source].label if s.source in adapters else s.source }} ↗</a><br>{% endfor %}</td>
+  <td style="font-size:13px;max-width:170px">
+    {% if ck.state == 'ok' %}<span class="pill hired" title="{{ ck.reason }}">✓ verified</span><br><a href="{{ ck.url }}" target="_blank" rel="noopener">/in/{{ ck.slug[:22] }} ↗</a>
+    {% elif ck.state == 'check' %}<span class="pill test_returned" title="{{ ck.reason }}">⚠ confirm</span><br><a href="{{ ck.url }}" target="_blank" rel="noopener">/in/{{ ck.slug[:22] }} ↗</a>
+    {% else %}<span class="pill rejected" title="{{ ck.reason }}">✗ no profile</span>{% if ck.search_url %}<br><a href="{{ ck.search_url }}" target="_blank" rel="noopener">search LinkedIn ↗</a>{% endif %}{% endif %}
+    {% if c.li_sent_at %}<br><span class="pill filtered" title="{{ c.li_sent_at.strftime('%d %b %H:%M') }} UTC">✉ {{ {'connect':'invite','dm':'DM','inmail':'InMail'}.get(c.li_sent_kind, 'sent') }} sent</span>{% endif %}</td>
   <td class="muted" style="font-size:12px">{{ c.discovered_at.strftime('%d %b') }}</td>
   <td class="row" style="gap:6px;flex-wrap:nowrap">
     {% if c.email and c.status != 'dismissed' and not c.emailed_at %}
@@ -92,7 +118,55 @@
     {% elif c.status == 'dismissed' %}<form method="post" action="{{ url_for('admin.websourcing_decide', cid=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}">
       <button class="btn small secondary" name="action" value="restore">Restore</button></form>{% endif %}
   </td>
-</tr>{% else %}<tr><td colspan="7" class="muted">
+</tr>
+{% if c.status != 'dismissed' %}<tr class="li-row" id="li-{{ c.id }}"><td></td><td colspan="7">
+<details {{ 'open' if (c.li_message and not c.li_sent_at) else '' }}>
+  <summary>LinkedIn reach-out —
+    {% if c.li_sent_at %}sent as {{ {'connect':'connection request','dm':'direct message','inmail':'InMail'}.get(c.li_sent_kind, 'message') }} on {{ c.li_sent_at.strftime('%d %b') }}
+    {% elif c.li_message %}<strong>ready — check, copy, send on LinkedIn, then mark sent</strong>
+    {% else %}no messages yet{% endif %}</summary>
+  <form method="post" action="{{ url_for('admin.websourcing_linkedin', cid=c.id) }}" class="li-box">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <div class="li-link">
+      <label>Profile link <span class="muted">({{ ck.reason }})</span><br>
+        <input name="linkedin_url" value="{{ ck.url or '' }}" placeholder="https://www.linkedin.com/in/…" style="width:min(460px,100%)"></label>
+      {% if ck.url %}<a class="btn small secondary" href="{{ ck.url }}" target="_blank" rel="noopener">Open profile ↗</a>{% endif %}
+      {% if ck.state != 'ok' and ck.search_url %}<a class="btn small secondary" href="{{ ck.search_url }}" target="_blank" rel="noopener">Search by name ↗</a>{% endif %}
+      {% for alt in ck.alternatives %}<span class="muted" style="font-size:12px">also seen: <a href="{{ alt }}" target="_blank" rel="noopener">{{ alt.replace('https://www.linkedin.com', '') }}</a></span>{% endfor %}
+    </div>
+    {% if c.li_message %}
+    <div class="li-grid">
+      <div><label>Connection note <span class="muted" id="cnt-{{ c.id }}">{{ (c.li_note or '')|length }}/{{ li_note_limit }}</span></label>
+        <textarea name="li_note" id="note-{{ c.id }}" maxlength="{{ li_note_limit }}" rows="5" data-count="cnt-{{ c.id }}">{{ c.li_note or '' }}</textarea>
+        <button class="btn small secondary" type="button" data-copy="note-{{ c.id }}">Copy note</button></div>
+      <div><label>InMail subject</label>
+        <input name="li_subject" id="subj-{{ c.id }}" value="{{ c.li_subject or '' }}" maxlength="120">
+        <button class="btn small secondary" type="button" data-copy="subj-{{ c.id }}">Copy subject</button>
+        <label style="margin-top:10px;display:block">DM / InMail message <span class="muted">(personal apply link included)</span></label>
+        <textarea name="li_message" id="msg-{{ c.id }}" rows="9">{{ li_text[c.id] }}</textarea>
+        <button class="btn small secondary" type="button" data-copy="msg-{{ c.id }}">Copy message</button></div>
+    </div>
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px">
+      <button class="btn small" name="action" value="save">Save edits</button>
+      <button class="btn small secondary" name="action" value="regenerate" onclick="return confirm('Rewrite all three texts for ' + {{ (c.full_name|clean_name)|tojson|forceescape }} + '? Your edits are replaced.')">Rewrite</button>
+      {% if c.li_sent_at %}
+        <button class="btn small secondary" name="action" value="unsent">Undo “sent”</button>
+      {% else %}
+        <span class="muted" style="font-size:13px;align-self:center">Sent it on LinkedIn? Mark as:</span>
+        <button class="btn small" name="action" value="sent_connect">Connection request</button>
+        <button class="btn small" name="action" value="sent_dm">DM</button>
+        <button class="btn small" name="action" value="sent_inmail">InMail</button>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="row" style="gap:6px;margin-top:8px">
+      <button class="btn small" name="action" value="regenerate">Write LinkedIn messages</button>
+      <button class="btn small secondary" name="action" value="save">Save link</button>
+    </div>
+    {% endif %}
+  </form>
+</details></td></tr>{% endif %}
+{% else %}<tr><td colspan="8" class="muted">
 {% if last_run and last_run.status in ('pending', 'running') %}
   Discovery is still running — names appear here as each source reports in.
 {% elif last_run and last_run.status == 'error' %}
@@ -104,4 +178,30 @@
 {% endif %}
 </td></tr>{% endfor %}
 </table>
+<style>
+  .li-bar{padding:10px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:14px;margin-bottom:10px}
+  .li-bar a{text-decoration:none}
+  table.wsr tr.main td{border-bottom:none}
+  table.wsr tr.li-row td{padding-top:0}
+  .li-row summary{cursor:pointer;font-size:13px;padding:2px 0 8px}
+  .li-box{background:rgba(0,0,0,.025);border-radius:10px;padding:12px 14px;margin-bottom:6px;font-size:13px}
+  .li-link{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+  .li-grid{display:grid;grid-template-columns:minmax(220px,1fr) minmax(280px,1.6fr);gap:14px}
+  .li-grid textarea,.li-grid input{width:100%;box-sizing:border-box;font:inherit;font-size:13px}
+  .li-grid .btn{margin-top:4px}
+  @media (max-width:820px){.li-grid{grid-template-columns:1fr}}
+</style>
+<script>
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('[data-copy]'); if (!b) return;
+  var el = document.getElementById(b.dataset.copy); if (!el) return;
+  var done = function () { var t = b.textContent; b.textContent = 'Copied ✓'; setTimeout(function () { b.textContent = t; }, 1400); };
+  if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(el.value).then(done); }
+  else { el.select(); document.execCommand('copy'); done(); }
+});
+document.addEventListener('input', function (e) {
+  var t = e.target; if (!t.dataset || !t.dataset.count) return;
+  var c = document.getElementById(t.dataset.count); if (c) c.textContent = t.value.length + '/' + t.maxLength;
+});
+</script>
 {% endblock %}

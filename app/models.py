@@ -10,6 +10,7 @@ db = SQLAlchemy()
 # (see clickup.STATUS_MAP). "new" = applied but not yet screened; it has no ClickUp column.
 STATUSES = [
     "new",               # applied, not yet screened by the agent / recruiter
+    "filtered_sourced",  # FILTERED SOURCED     – added from sourcing (recruiter's pick, usually no CV yet)
     "filtered",          # FILTRED APPLICATION  – passed screening
     "selected",          # SELECTED/ IN PROGRESS
     "test_sent",         # TEST SENT
@@ -23,6 +24,7 @@ STATUSES = [
 
 STATUS_LABELS = {
     "new": "New",
+    "filtered_sourced": "Filtered sourced",
     "filtered": "Filtered application",
     "selected": "Selected / in progress",
     "test_sent": "Test sent",
@@ -524,6 +526,15 @@ class WebCandidate(db.Model):
     status = db.Column(db.String(15), default="new", nullable=False, index=True)  # new/shortlisted/dismissed/moved
     emailed_at = db.Column(db.DateTime)          # recruiter sent the outreach email (explicit click)
     sourced_profile_id = db.Column(db.Integer, db.ForeignKey("sourced_profiles.id"))  # set when moved to outreach
+    # LinkedIn reach-out (reviewed on the discovered-candidates page, sent by hand on LinkedIn)
+    linkedin_url = db.Column(db.String(400))     # verified canonical https://www.linkedin.com/in/<slug>
+    li_note = db.Column(db.String(400))          # connection-request note (LinkedIn limit: 300 chars)
+    li_subject = db.Column(db.String(200))       # InMail subject
+    li_message = db.Column(db.Text)              # DM / InMail body; "{apply_url}" placeholder for the link
+    li_generated_at = db.Column(db.DateTime)
+    li_sent_at = db.Column(db.DateTime)          # recruiter marked it sent on LinkedIn
+    li_sent_kind = db.Column(db.String(20))      # connect / dm / inmail
+    apply_token = db.Column(db.String(32), index=True)  # personal /r/<token> link used in the messages
     discovered_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -557,6 +568,27 @@ class WebCandidate(db.Model):
     def missing(self):
         return _json_get(self.missing_json, [])
 
+    @property
+    def linkedin_candidates(self):
+        """Every LinkedIn profile URL we hold for this person (verified one first)."""
+        from .linkedin_links import normalize
+        urls = [self.linkedin_url, self.profile_url] + [s.get("url") for s in self.sources] + [self.website]
+        out = []
+        for u in urls:
+            n = normalize(u)
+            if n and n not in out:
+                out.append(n)
+        return out
+
+    @property
+    def li_check(self):
+        """Verdict on the LinkedIn link used for reach-out (see app.linkedin_links.check)."""
+        from .linkedin_links import check
+        found = self.linkedin_candidates
+        res = check(found[0] if found else None, self.full_name)
+        res["alternatives"] = found[1:]
+        return res
+
     def to_dict(self):
         return {
             "id": self.id, "role": self.role.slug, "full_name": self.full_name, "headline": self.headline,
@@ -565,5 +597,9 @@ class WebCandidate(db.Model):
             "languages": self.languages, "projects": self.projects, "evidence": self.evidence,
             "match_score": self.match_score, "confidence": self.confidence, "matched": self.matched,
             "missing": self.missing, "match_reason": self.match_reason, "status": self.status,
+            "linkedin_url": self.linkedin_url, "li_note": self.li_note, "li_subject": self.li_subject,
+            "li_message": self.li_message,
+            "li_sent_at": self.li_sent_at.isoformat() + "Z" if self.li_sent_at else None,
+            "li_sent_kind": self.li_sent_kind,
             "discovered_at": self.discovered_at.isoformat() + "Z",
         }

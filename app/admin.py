@@ -345,6 +345,16 @@ def cv_bank_organize():
 
 # ---------- Sourcing (Milestone 1) ----------
 
+@bp.post("/sourcing/backfill-filtered-sourced")
+@login_required
+def sourcing_backfill_filtered_sourced():
+    """Move sourced applicants (no CV yet) from FILTRED APPLICATION to FILTERED SOURCED + tag on ClickUp."""
+    moved = sourcing.backfill_filtered_sourced()
+    flash(f"{len(moved)} sourced applicant(s) moved to Filtered sourced and tagged on ClickUp"
+          + (": " + ", ".join(n for _, n in moved[:12]) + ("…" if len(moved) > 12 else "") if moved else "."), "ok")
+    return redirect(request.form.get("next") or url_for("admin.sourcing_home"))
+
+
 @bp.get("/sourcing")
 @login_required
 def sourcing_home():
@@ -483,7 +493,7 @@ def sourcing_role(slug):
                     n += 1
             db.session.commit()
             if decision == "promote" and n:
-                flash(f"{promoted} candidate(s) added to Applicants as FILTRED APPLICATION"
+                flash(f"{promoted} candidate(s) added to Applicants as FILTERED SOURCED"
                       + (f" ({linked} already had an application — linked instead)" if linked else "")
                       + " — they now show on the Dashboard and under Applicants.", "ok")
             else:
@@ -565,7 +575,7 @@ def sourcing_profile(pid):
                 flash(f"Pre-score failed: {exc}", "error")
         elif action == "promote":
             a, created = sourcing.promote_to_applicant(p)
-            flash(f"{p.full_name} added to Applicants as FILTRED APPLICATION — now on the Dashboard "
+            flash(f"{p.full_name} added to Applicants as FILTERED SOURCED — now on the Dashboard "
                   "and under Applicants." if created
                   else f"{p.full_name} already has an application — linked to it.", "ok")
         db.session.commit()
@@ -637,12 +647,39 @@ def websourcing_role(slug):
     websourcing.reap_stale_runs()
     f = websourcing.filters_from_args(request.args)
     rows = websourcing.apply_filters(WebCandidate.query.filter_by(role_id=role.id), f)
+    # LinkedIn reach-out: link verdict per row, filter, duplicate-name warning, rendered messages
+    from collections import Counter
+    from .linkedin_links import clean_name
+    li = websourcing.linkedin_outreach
+    f["li"] = (request.args.get("li") or "").strip()
+    checks = {c.id: c.li_check for c in rows}
+    li_summary = Counter(("missing" if checks[c.id]["state"] == "invalid" else checks[c.id]["state"]) for c in rows)
+    li_summary["ready"] = sum(1 for c in rows if c.li_message and not c.li_sent_at)
+    li_summary["sent"] = sum(1 for c in rows if c.li_sent_at)
+    want = f["li"]
+    if want in ("ok", "check"):
+        rows = [c for c in rows if checks[c.id]["state"] == want]
+    elif want == "missing":
+        rows = [c for c in rows if checks[c.id]["state"] in ("missing", "invalid")]
+    elif want == "ready":
+        rows = [c for c in rows if c.li_message and not c.li_sent_at]
+    elif want == "none":
+        rows = [c for c in rows if not c.li_message]
+    elif want == "sent":
+        rows = [c for c in rows if c.li_sent_at]
+    name_counts = Counter(clean_name(c.full_name).lower() for c in rows if c.status != "dismissed")
+    dup_ids = {c.id for c in rows if name_counts[clean_name(c.full_name).lower()] > 1}
+    li_text = {c.id: li.rendered_message(c) for c in rows if c.li_message}
+    if db.session.dirty:
+        db.session.commit()        # personal link tokens created for older rows
     last_run = (WebSourcingRun.query.filter_by(role_id=role.id)
                 .order_by(WebSourcingRun.created_at.desc()).first())
     all_rows = role.web_candidates
     skills = sorted({s for r in all_rows.limit(500) for s in r.skills})[:40]
     src_names = sorted({s["source"] for r in all_rows.limit(500) for s in r.sources})
     return render_template("admin/websourcing_role.html", role=role, rows=rows, f=f,
+                           checks=checks, li_summary=li_summary, dup_ids=dup_ids, li_text=li_text,
+                           li_note_limit=li.NOTE_LIMIT,
                            last_run=last_run, skills=skills, src_names=src_names,
                            adapters=websourcing.ADAPTERS, role_paused=websourcing.is_paused(role),
                            enabled=websourcing.enabled_sources(current_app.config))
@@ -666,7 +703,9 @@ def websourcing_decide(cid):
     if action == "shortlist":
         c.status = "shortlisted"
         db.session.commit()
-        flash(f"{c.full_name} shortlisted.", "ok")
+        if not c.li_message:   # LinkedIn note + message ready for review by the time the page reloads
+            websourcing.linkedin_outreach.generate_async([c.id])
+        flash(f"{c.full_name} shortlisted — LinkedIn messages are being written (refresh in a few seconds).", "ok")
     elif action == "dismiss":
         c.status = "dismissed"
         db.session.commit()
@@ -682,15 +721,78 @@ def websourcing_decide(cid):
               "(no message sent yet; sending stays your click).", "ok")
         return redirect(url_for("admin.sourcing_role", slug=c.role.slug, tab="queue"))
     elif action == "applicant":
-        # Straight into the ATS: outreach profile + Applicant with status FILTRED APPLICATION.
+        # Straight into the ATS: outreach profile + Applicant with status FILTERED SOURCED.
         p = websourcing.move_to_outreach(c)
         a, created = sourcing.promote_to_applicant(p)
-        flash(f"{c.full_name} added to Applicants as FILTRED APPLICATION — now on the Dashboard "
+        flash(f"{c.full_name} added to Applicants as FILTERED SOURCED — now on the Dashboard "
               "and under Applicants." if created
               else f"{c.full_name} already has an application — linked to it.", "ok")
         return redirect(url_for("admin.applicant_detail", public_id=a.public_id))
     nxt = request.form.get("next") or url_for("admin.websourcing_role", slug=c.role.slug)
     return redirect(nxt)
+
+
+@bp.post("/web-sourcing/candidate/<int:cid>/linkedin")
+@login_required
+def websourcing_linkedin(cid):
+    """LinkedIn reach-out box: save edits / regenerate / mark sent. Nothing is sent from the app."""
+    from . import websourcing
+    from .models import WebCandidate
+    li = websourcing.linkedin_outreach
+    c = WebCandidate.query.get_or_404(cid)
+    action = request.form.get("action")
+    f = request.form
+    if action in ("save", "regenerate", "sent_connect", "sent_dm", "sent_inmail"):
+        err = li.save(c, note=f.get("li_note"), subject=f.get("li_subject"), message=f.get("li_message"),
+                      linkedin_url=f.get("linkedin_url"))
+        if err:
+            flash(f"{c.full_name}: {err}", "error")
+    if action == "regenerate":
+        li.generate(c, force=True)
+        flash(f"New LinkedIn texts written for {c.full_name} — check them before sending.", "ok")
+    elif action and action.startswith("sent_"):
+        kind = action[len("sent_"):]
+        li.mark_sent(c, kind)
+        flash(f"{c.full_name}: {li.KINDS.get(kind, kind)} marked as sent on LinkedIn.", "ok")
+    elif action == "unsent":
+        li.unmark_sent(c)
+        flash(f"{c.full_name}: sent mark removed.", "ok")
+    elif action == "save":
+        flash(f"Saved {c.full_name}'s LinkedIn link and texts.", "ok")
+    nxt = f.get("next") or url_for("admin.websourcing_role", slug=c.role.slug)
+    return redirect(nxt + f"#li-{c.id}")
+
+
+@bp.post("/web-sourcing/<slug>/linkedin-generate")
+@login_required
+def websourcing_linkedin_generate(slug):
+    """Write LinkedIn texts for every active candidate of the role that has none yet (best scores first)."""
+    from . import websourcing
+    from .models import WebCandidate
+    role = Role.query.filter_by(slug=slug).first_or_404()
+    limit = max(1, min(int(request.form.get("limit") or 25), 60))
+    q = (role.web_candidates.filter(WebCandidate.status.in_(("new", "shortlisted")),
+                                    WebCandidate.li_message.is_(None))
+         .order_by(WebCandidate.match_score.desc().nullslast()))
+    if request.form.get("scope") == "shortlisted":
+        q = q.filter(WebCandidate.status == "shortlisted")
+    ids = [c.id for c in q.limit(limit).all()]
+    n = websourcing.linkedin_outreach.generate_async(ids)
+    flash(f"Writing LinkedIn messages for {n} candidate(s) — refresh the page in a minute." if n
+          else "Every candidate in this list already has LinkedIn messages.", "ok")
+    return redirect(request.form.get("next") or url_for("admin.websourcing_role", slug=slug))
+
+
+@bp.post("/web-sourcing/<slug>/fix-links")
+@login_required
+def websourcing_fix_links(slug):
+    from . import websourcing
+    role = Role.query.filter_by(slug=slug).first_or_404()
+    r = websourcing.linkedin_outreach.fix_links(role)
+    flash(f"LinkedIn links checked: {r['ok']} verified · {r['check']} to confirm · "
+          f"{r['missing'] + r['invalid']} without a profile link"
+          + (f" · {r['renamed']} name(s) cleaned" if r["renamed"] else "") + ".", "ok")
+    return redirect(request.form.get("next") or url_for("admin.websourcing_role", slug=slug))
 
 
 @bp.route("/web-sourcing/candidate/<int:cid>/email", methods=["GET", "POST"])

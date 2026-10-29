@@ -1,4 +1,5 @@
 {% extends "admin/base.html" %}
+{% macro li_badge(url, name) %}{% set ck = url|li_check(name) %}{% if ck.state == 'ok' %}<span class="pill hired" style="font-size:11px" title="{{ ck.reason }}">✓ LinkedIn link verified</span>{% elif ck.state == 'check' %}<span class="pill test_returned" style="font-size:11px" title="{{ ck.reason }}">⚠ confirm LinkedIn link</span>{% else %}<span class="pill rejected" style="font-size:11px" title="{{ ck.reason }}">✗ no LinkedIn profile link</span>{% if ck.search_url %} <a href="{{ ck.search_url }}" target="_blank" rel="noopener" style="font-size:12px">search ↗</a>{% endif %}{% endif %}{% endmacro %}
 {% from "admin/_regions.html" import region_chips %}
 {% block title %}Sourcing — {{ role.title }}{% endblock %}
 {% block content %}
@@ -42,8 +43,8 @@
 <div class="row" style="margin-bottom:10px">
   <button class="btn small" name="decision" value="approve" type="submit">Approve selected</button>
   <button class="btn small secondary" name="decision" value="promote" type="submit"
-    title="Create an application with status FILTRED APPLICATION for each selected candidate — they appear on the Dashboard, under Applicants and on ClickUp"
-    onclick="return confirm('Add the selected candidates to Applicants as FILTRED APPLICATION?')">Add to Applicants (Filtered)</button>
+    title="Create an application with status FILTERED SOURCED for each selected candidate — they appear on the Dashboard, under Applicants and on ClickUp"
+    onclick="return confirm('Add the selected candidates to Applicants as FILTERED SOURCED?')">Add to Applicants (Filtered sourced)</button>
   <button class="btn small danger" name="decision" value="reject" type="submit">Reject selected</button>
   <span class="muted" style="font-size:13px">Approving renders the messages from the role templates and queues the connection request.</span>
 </div>
@@ -51,7 +52,8 @@
 {% for p in shortlist %}<tr>
   <td><input type="checkbox" name="ids" value="{{ p.id }}"{% if p.pre_score and p.pre_score >= 70 %} checked{% endif %}></td>
   <td class="score">{{ p.pre_score if p.pre_score is not none else '–' }}</td>
-  <td><a href="{{ url_for('admin.sourcing_profile', pid=p.id) }}"><strong>{{ p.full_name }}</strong></a><br><a href="{{ p.profile_url }}" target="_blank" class="muted" style="font-size:12px">{{ p.channel }} ↗</a></td>
+  <td><a href="{{ url_for('admin.sourcing_profile', pid=p.id) }}"><strong>{{ p.full_name }}</strong></a><br><a href="{{ p.profile_url }}" target="_blank" class="muted" style="font-size:12px">{{ p.channel }} ↗</a>
+      {% if p.channel == 'linkedin' or 'linkedin' in (p.profile_url or '') %}<br>{{ li_badge(p.profile_url, p.full_name) }}{% endif %}</td>
   <td style="max-width:320px">{{ p.headline or '' }}{% if p.company %}<br><span class="muted">{{ p.company }}</span>{% endif %}</td>
   <td>{{ p.location or '' }}</td>
   <td class="muted" style="font-size:13px;max-width:360px">{{ p.pre_reason or '' }}</td>
@@ -68,7 +70,8 @@
 <table><tr><th><input type="checkbox" onclick="document.querySelectorAll('input[name=ids]').forEach(c=>c.checked=this.checked)"></th><th>Candidate</th><th>Stage</th><th>Next step</th><th>Text to send</th><th>State</th></tr>
 {% for p in queue %}<tr>
   <td>{% if not p.released and p.channel == 'linkedin' %}<input type="checkbox" name="ids" value="{{ p.id }}">{% endif %}</td>
-  <td><a href="{{ url_for('admin.sourcing_profile', pid=p.id) }}"><strong>{{ p.full_name }}</strong></a><br><span class="muted" style="font-size:12px">{{ channel_labels.get(p.channel, p.channel) }}{% if p.headline %} · {{ p.headline }}{% endif %}</span></td>
+  <td><a href="{{ url_for('admin.sourcing_profile', pid=p.id) }}"><strong>{{ p.full_name }}</strong></a><br><span class="muted" style="font-size:12px">{{ channel_labels.get(p.channel, p.channel) }}{% if p.headline %} · {{ p.headline }}{% endif %}</span>
+      {% if p.channel == 'linkedin' %}<br>{{ li_badge(p.profile_url, p.full_name) }} <a href="{{ p.profile_url }}" target="_blank" rel="noopener" style="font-size:12px">open ↗</a>{% endif %}</td>
   <td><span class="pill">{{ p.stage }}</span>{% if p.reply_class %}<br><span class="pill {{ 'filtered' if p.reply_class=='interested' else 'test_returned' }}">reply: {{ p.reply_class }}</span>{% endif %}</td>
   <td><code>{{ p.next_action }}</code><br><span class="muted" style="font-size:12px">due {{ p.next_due_at.strftime('%d %b %H:%M') if p.next_due_at else 'now' }}</span></td>
   <td style="max-width:420px;font-size:13px;white-space:pre-wrap">{% if p.next_action == 'connect' %}{{ p.draft_note }}{% elif p.next_action == 'message' %}{{ p.draft_message }}{% elif p.next_action == 'reminder' %}{{ p.draft_reminder }}{% else %}<span class="muted">(passive check: has the invitation been accepted?)</span>{% endif %}</td>
@@ -91,8 +94,8 @@
     <form method="post"><input type="hidden" name="action" value="decide"><input type="hidden" name="tab" value="contacted">
       <input type="hidden" name="decision" value="promote"><input type="hidden" name="ids" value="{{ p.id }}">
       <button class="btn small secondary" type="submit"
-        title="Create an application with status FILTRED APPLICATION — shows on the Dashboard, under Applicants and on ClickUp"
-        onclick="return confirm('Add {{ p.full_name }} to Applicants as FILTRED APPLICATION?')">To Applicants</button>
+        title="Create an application with status FILTERED SOURCED — shows on the Dashboard, under Applicants and on ClickUp"
+        onclick="return confirm('Add {{ p.full_name }} to Applicants as FILTERED SOURCED?')">To Applicants</button>
     </form>{% endif %}</td>
 </tr>{% else %}<tr><td colspan="10" class="muted">No approved profiles yet.</td></tr>{% endfor %}
 </table>

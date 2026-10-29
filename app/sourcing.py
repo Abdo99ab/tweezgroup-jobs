@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import current_app
 
-from . import channels, mailer, regions
+from . import channels, linkedin_links, mailer, regions
 from .models import (ACTIONS, CHANNEL_SEARCH, Applicant, Role, Setting, SourcedProfile, SourcingAction,
                      SourcingSearch, WebSourcingRun, db, log_event, utcnow)
 
@@ -234,11 +234,16 @@ def ingest_results(search, profiles, done=False, error=None):
     role = search.role
     new_ids = []
     for p in profiles:
-        url = _clean_url(p.get("profile_url"))
-        name = (p.get("full_name") or "").strip()
+        raw_url = _clean_url(p.get("profile_url"))
+        # Canonical https://www.linkedin.com/in/<slug> for LinkedIn people (locale sub-domains,
+        # /details/… suffixes and query strings removed); other channels keep the cleaned URL.
+        url = linkedin_links.normalize(raw_url) or raw_url
+        name = linkedin_links.clean_name(p.get("full_name") or "")   # drop "• 2nd" etc.
         if not url or not name:
             continue
-        row = SourcedProfile.query.filter_by(role_id=role.id, profile_url=url).first()
+        row = (SourcedProfile.query.filter_by(role_id=role.id, profile_url=url).first()
+               or (SourcedProfile.query.filter_by(role_id=role.id, profile_url=raw_url).first()
+                   if raw_url != url else None))
         if row is None:
             row = SourcedProfile(role=role, search=search, channel=p.get("channel") or search.channel,
                                  profile_url=url, full_name=name)
@@ -631,7 +636,8 @@ def ingest_inbox(messages):
         url = _clean_url(m.get("profile_url"))
         if not url:
             continue
-        p = (SourcedProfile.query.filter_by(profile_url=url)
+        canon = linkedin_links.normalize(url)
+        p = (SourcedProfile.query.filter(SourcedProfile.profile_url.in_({url, canon or url}))
              .filter(SourcedProfile.decision == "approved").order_by(SourcedProfile.created_at.desc()).first())
         if not p:
             continue
@@ -762,9 +768,9 @@ def funnel(role=None):
 # ------------------------------------------------------------------------------------ promote to ATS
 
 def promote_to_applicant(profile, actor="admin"):
-    """Recruiter picked this sourced candidate: create an Applicant with status FILTRED
-    APPLICATION so they appear on the Dashboard and in the Applicants section (and on
-    ClickUp, when configured) without waiting for them to apply through their link.
+    """Recruiter picked this sourced candidate: create an Applicant with status FILTERED
+    SOURCED (ClickUp column of the same name + the CLICKUP_SOURCED_TAG tag) so they appear on
+    the Dashboard and in the Applicants section without waiting for them to apply.
 
     Returns (applicant, created). Never duplicates: an existing linked application or a
     same-email application for the role is reused."""
@@ -776,25 +782,26 @@ def promote_to_applicant(profile, actor="admin"):
     if email:
         a = Applicant.query.filter_by(role_id=profile.role_id, email=email).filter(
             Applicant.deleted_at.is_(None)).first()
+    li_url = linkedin_links.normalize(profile.profile_url)
     if a is None:
         a = Applicant(
             role=profile.role,
-            full_name=profile.full_name,
+            full_name=linkedin_links.clean_name(profile.full_name),
             # Applicant.email is required; sourced people often have none published yet —
             # a clearly-fake placeholder keeps the record honest until they apply/reply.
             email=email or f"no-email-sp{profile.id}@sourced.local",
-            linkedin_url=profile.profile_url if "linkedin.com" in (profile.profile_url or "") else None,
+            linkedin_url=li_url,
             location=profile.location,
             cover_note=(f"Added from sourcing ({profile.channel}). Profile: {profile.profile_url}\n"
                         + (f"Headline: {profile.headline}\n" if profile.headline else "")
                         + (f"Pre-score {profile.pre_score}: {profile.pre_reason}" if profile.pre_score else "")).strip(),
-            source=profile.channel if profile.channel in SOURCES else "other",
-            status="filtered",
+            source="linkedin" if li_url else (profile.channel if profile.channel in SOURCES else "other"),
+            status="filtered_sourced",
         )
         a.set_retention(current_app.config["RETENTION_MONTHS"])
         db.session.add(a)
         db.session.flush()
-        log_event(a, "note", f"Added to applicants as FILTRED APPLICATION from sourcing by {actor} "
+        log_event(a, "note", f"Added to applicants as FILTERED SOURCED from sourcing by {actor} "
                              f"(no CV yet — sourced profile {profile.profile_url})", actor=actor)
         created = True
     else:
@@ -809,8 +816,35 @@ def promote_to_applicant(profile, actor="admin"):
     if created:
         try:
             from . import clickup
-            clickup.create_task(a)          # lands in FILTRED APPLICATION; never raises
+            clickup.create_task(a)          # lands in FILTERED SOURCED + sourced tag; never raises
             db.session.commit()
         except Exception:
             log.exception("ClickUp task for promoted applicant %s failed", a.id)
     return a, created
+
+
+def backfill_filtered_sourced(dry_run=False):
+    """One-off: applicants added from sourcing before FILTERED SOURCED existed sit in FILTRED
+    APPLICATION with no CV. Move them to filtered_sourced, push the status + tag to ClickUp and
+    fix their LinkedIn link. Applicants who uploaded a CV (real applications) are left alone.
+    Returns the list of (public_id, full_name) moved."""
+    from . import clickup
+    moved = []
+    q = (Applicant.query.join(SourcedProfile, SourcedProfile.applicant_id == Applicant.id)
+         .filter(Applicant.deleted_at.is_(None), Applicant.status == "filtered", Applicant.cv_key.is_(None)))
+    for a in q.all():
+        moved.append((a.public_id, a.full_name))
+        if dry_run:
+            continue
+        a.status = "filtered_sourced"
+        a.full_name = linkedin_links.clean_name(a.full_name)
+        sp = SourcedProfile.query.filter_by(applicant_id=a.id).first()
+        li = linkedin_links.normalize(a.linkedin_url) or (linkedin_links.normalize(sp.profile_url) if sp else None)
+        if li:
+            a.linkedin_url = li
+        log_event(a, "status_changed", "filtered -> filtered_sourced (sourced profile, backfill)", actor="admin")
+        db.session.commit()
+        clickup.sync_status(a)
+        clickup.ensure_sourced_tag(a)
+        db.session.commit()
+    return moved

@@ -33,6 +33,9 @@ def create_app(config_object=Config):
     from .textfmt import description_html, has_sections
     app.jinja_env.filters["jobdesc"] = description_html
     app.jinja_env.tests["sectioned"] = has_sections
+    from .linkedin_links import check as li_check, clean_name
+    app.jinja_env.filters["li_check"] = li_check
+    app.jinja_env.filters["clean_name"] = clean_name
 
     @app.context_processor
     def inject_globals():
@@ -293,6 +296,16 @@ def register_cli(app):
             click.echo(f"  {label}: {', '.join(done) or 'nothing changed'}")
         for line in retry_unsent_tests():
             click.echo("  " + line)
+
+    @app.cli.command("backfill-filtered-sourced")
+    @click.option("--dry-run", is_flag=True, help="List who would move without changing anything")
+    def backfill_filtered_sourced_cmd(dry_run):
+        """Move sourced applicants (no CV) from FILTRED APPLICATION to FILTERED SOURCED + ClickUp tag."""
+        from . import sourcing
+        moved = sourcing.backfill_filtered_sourced(dry_run=dry_run)
+        for pid, name in moved:
+            click.echo(f"{'would move' if dry_run else 'moved'}: {pid}  {name}")
+        click.echo(f"{len(moved)} applicant(s){' (dry run)' if dry_run else ''}.")
 
     @app.cli.command("rotate-keys")
     def rotate_keys():

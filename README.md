@@ -1,12 +1,12 @@
 # Tweezgroup Applicant System (HR Superagent — Milestone 0)
 
-The single source of truth for candidates. A candidate applies with one link (or the form embedded on a company website); the CV lands in **TWEEZ-CV-BANK on Google Drive** (in the role's subfolder); Claude writes a screening summary; a **ClickUp task assigned to Mehdi Mahcene** is created in the role's list and the summary is posted as a comment **tagging Ahmidou, Taoufik Mousselmal and Abderrahmane Hammia**.
+The single source of truth for candidates. A candidate applies with one link (or the form embedded on a company website); the CV lands in **TWEEZ-CV-BANK on Google Drive** (in the role's subfolder); Claude writes a screening summary; a **ClickUp task assigned to Mehdi Mahcene** is created in the role's list and the summary is posted as a comment **tagging Abderrahmane Hammia** (`CLICKUP_MENTIONS`). Other reviewers (Taoufik Mousselmal, Ahmidou) are tagged by hand on ClickUp — the automatic status tagging (`CLICKUP_STATUS_MENTIONS`) is off by default.
 
 ```
 candidate ──> /apply/<role> (link or iframe) ──> Postgres record + CV → Google Drive (TWEEZ-CV-BANK/<Role> CVs)
                                                      │
                                                      ├──> Claude: score + summary (against the role's requirements)
-                                                     └──> ClickUp task (assignee: Mehdi) + summary comment (cc Ahmidou, Taoufik, Abderrahmane)
+                                                     └──> ClickUp task (assignee: Mehdi) + summary comment (cc Abderrahmane)
                        recruiter admin (/admin) ◄────┘        agent API (/api/v1) for Milestones 3–4
 ```
 
@@ -18,7 +18,7 @@ candidate ──> /apply/<role> (link or iframe) ──> Postgres record + CV �
 | Admin (`/admin`) | Login, pipeline dashboard, roles (create/edit, **screening requirements = the agent's knowledge base**), applicant list with filters + full-text search over CV text, detail page with status change, notes, activity log, CV view, CSV export, GDPR delete |
 | Agent API (`/api/v1`) | API-key protected. List/read roles and applicants (incl. extracted CV text), update status/score/summary, log events (e.g. `email_sent`), register sourced candidates and get their personalised apply link, pipeline stats |
 | Auto-summary | On every application Claude (`SUMMARY_MODEL`, default claude-haiku-4-5) reads the CV against the role's requirements and writes score 0–100, recommendation, highlights, matches, gaps and flags |
-| ClickUp | Task created on apply in the role's list, **assigned to Mehdi Mahcene**; the summary posted as a comment **@-tagging Ahmidou, Taoufik Mousselmal, Abderrahmane Hammia**; every status change pushed with the board's exact status names. People are matched by ClickUp display name (`CLICKUP_ASSIGNEE`, `CLICKUP_MENTIONS`) |
+| ClickUp | Task created on apply in the role's list, **assigned to Mehdi Mahcene**; the summary posted as a comment **@-tagging Abderrahmane Hammia**; applicants from sourcing land in **FILTERED SOURCED** with the tag `filtered sourced`; every status change pushed with the board's exact status names. People are matched by ClickUp display name (`CLICKUP_ASSIGNEE`, `CLICKUP_MENTIONS`) |
 | Storage | CVs uploaded to Google Drive **TWEEZ-CV-BANK**, into the role's **designated subfolder** (pinned per role — all 15 existing folders are pre-mapped by `flask seed-roles`; an unpinned role is matched to the best-named existing folder, e.g. "Head of Accounting" → "Head Acountant CVs"; only a role with no folder gets a new `<Role> CVs`). File name **`<CODE><DDMMYYYY> - <Candidate>.pdf`**, e.g. `HM31082026 - Sara Benali.pdf`. Drive link stored on the record and in the ClickUp task. S3 and local disk remain available |
 | GDPR | Consent timestamp, `retention_until` (12 months by default), `flask purge-expired` anonymises expired rows and deletes files; per-applicant delete in admin and API |
 
@@ -27,6 +27,7 @@ Statuses mirror the ClickUp recruiting lists exactly, plus an internal `new` for
 | App status | ClickUp status |
 |---|---|
 | `new` | — (not on the board yet) |
+| `filtered_sourced` | FILTERED SOURCED (+ tag `filtered sourced`) — sourced profiles added to Applicants |
 | `filtered` | FILTRED APPLICATION |
 | `selected` | SELECTED/ IN PROGRESS |
 | `test_sent` | TEST SENT |
@@ -38,6 +39,16 @@ Statuses mirror the ClickUp recruiting lists exactly, plus an internal `new` for
 | `hired` | HIRED |
 
 `CLICKUP_CREATE_ON=apply` (default) creates a task for every application (it lands in the list's first column, FILTRED APPLICATION). Set `CLICKUP_CREATE_ON=filtered` to create tasks only once an applicant is moved to `filtered`.
+
+### LinkedIn reach-out (Web Sourcing → role page)
+
+Every discovered candidate has a **LinkedIn reach-out** box under their row, for a last check before you send by hand on LinkedIn:
+
+- **Profile link check** — ✓ verified (canonical `https://www.linkedin.com/in/<slug>` whose slug contains the name), ⚠ confirm (internal `ACoA…` id, or a slug naming someone else — typical of mutual-connection links on search cards), ✗ no profile (GitHub/portfolio only → *search LinkedIn* link). Paste the right `/in/` URL in the box to fix it. *Re-check links* normalises every stored link and strips `• 2nd` from names; two rows with the same name are flagged.
+- **Messages** — a connection note (≤ 300 characters, no link), an InMail subject and a DM/InMail body with the candidate's **personal apply link** (`/r/<token>`), written by Claude from public information only (template fallback without an API key). *Write LinkedIn messages* does the 25 best-scored candidates at once; *Shortlist* writes them automatically. Edit, **Copy**, send on LinkedIn, then **Mark as: Connection request / DM / InMail**.
+- Opening the personal link moves the candidate into the outreach pipeline (link-open and application tracked, applicant tagged as sourced). A hand-sent message is recorded on the outreach profile, so the worker never invites the same person twice.
+
+Sourced profiles added to Applicants land in **FILTERED SOURCED**. Applicants added before that existed: *Sourcing → Move sourced to Filtered sourced* (or `flask --app wsgi backfill-filtered-sourced --dry-run`).
 
 ### Role codes (CV file names)
 
@@ -86,7 +97,7 @@ Right after the candidate sees the confirmation page (background thread, ~5–15
 1. Claude summarises the CV → `score`, `ai_summary` on the record.
 2. The score policy decides the status (see table above); if a test is due, it is emailed.
 3. ClickUp task created in the role's list with that status, assignee Mehdi Mahcene, description with contact details, declared experience, Drive link to the CV, link to the admin record.
-4. Comment posted on the task with the summary, ending with `cc @Ahmidou, @Taoufik Mousselmal, @Abderrahmane Hammia` (real mentions; falls back to plain text if the API rejects the rich format).
+4. Comment posted on the task with the summary, ending with `cc @Abderrahmane Hammia` (real mentions; falls back to plain text if the API rejects the rich format).
 
 Each step is idempotent. `flask --app wsgi process-pending` (or `POST /api/v1/applicants/<id>/process`, or the "Re-run" button in the admin) retries whatever is missing.
 
